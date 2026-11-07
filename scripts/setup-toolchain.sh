@@ -35,7 +35,7 @@ if [ "${SKIP_APT:-0}" != 1 ]; then
   sudo_ apt-get update -qq
   DEBIAN_FRONTEND=noninteractive sudo_ apt-get install -y -qq --no-install-recommends \
     "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "llvm-$LLVM_VERSION" \
-    cmake ninja-build msitools wine64 python3 zip unzip git ca-certificates curl >/dev/null
+    cmake ninja-build msitools wine wine64 python3 zip unzip git ca-certificates curl >/dev/null
 fi
 for t in clang-cl lld-link llvm-lib llvm-rc llvm-ar; do
   command -v "$t-$LLVM_VERSION" >/dev/null || { echo "missing $t-$LLVM_VERSION" >&2; exit 1; }
@@ -105,8 +105,10 @@ PY
   rm -rf "$work"
 fi
 # First Wine start creates the prefix; do it here so the build log stays quiet.
-WINEPREFIX=$FXC_DIR/wineprefix WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
-  wine "$FXC_DIR/fxc.exe" /? >/dev/null 2>&1 || true
+# fxc /? exits non-zero, so check that it printed its banner instead.
+banner=$(FXC_DIR=$FXC_DIR "$(dirname "$0")/fxc.sh" /? 2>&1 || true)
+grep -q "Direct3D Shader Compiler" <<<"$banner" || {
+  echo "fxc.exe does not run under Wine (is wine installed?):" >&2; echo "$banner" | tail -5 >&2; exit 1; }
 
 cat > "$TOOLS/env.sh" <<EOF
 export XWIN_SYSROOT="$SYSROOT"

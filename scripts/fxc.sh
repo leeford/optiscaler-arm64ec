@@ -15,4 +15,6 @@ for a in "$@"; do
   fi
   args+=("$a")
 done
-exec wine "$FXC_DIR/fxc.exe" "${args[@]}"
+# Debian/Ubuntu's wine64 package ships only wine64; the wine launcher is separate.
+wine=$(command -v wine || command -v wine64) || { echo "fxc.sh: wine not found" >&2; exit 127; }
+exec "$wine" "$FXC_DIR/fxc.exe" "${args[@]}"
