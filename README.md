@@ -46,7 +46,7 @@ The plugin installs `OptiScaler.dll`, the ini and the `OptiScaler/` runtime
 folder into the game, renames the DLL, and sets the launch options.
 
 **Option A: the forked plugin (recommended).** The fork in
-`YOUR_GITHUB_USER/decky-optiscaler-arm64ec` downloads from this repo and also
+`leeford/decky-optiscaler-arm64ec` downloads from this repo and also
 installs the `OptiScaler/` runtimes (XeSS, FidelityFX, D3D12 Agility). Build it
 with `pnpm install && pnpm build`, zip it as Decky expects, and in Decky turn on
 **Developer mode** and use **Install plugin from ZIP**.
@@ -58,7 +58,7 @@ with `pnpm install && pnpm build`, zip it as Decky expects, and in Decky turn on
 REPO = "justradical/Sloptiscaler"
 ```
 
-to `REPO = "YOUR_GITHUB_USER/optiscaler-arm64ec"`, then restart Decky:
+to `REPO = "leeford/optiscaler-arm64ec"`, then restart Decky:
 
 ```bash
 sudo systemctl restart plugin_loader
