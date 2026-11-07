@@ -69,5 +69,7 @@ if machine != 0x8664:
     sys.exit(f"unexpected machine 0x{machine:04x}")
 print(f"PE machine 0x{machine:04x} (x64 header, ARM64EC code), {len(b) // 1024} KiB")
 PY
-llvm-readobj$LLVM_SUFFIX --coff-load-config "$dll" | grep -q CHPEMetadataPointer || { echo "no CHPE metadata: not ARM64EC" >&2; exit 1; }
+# Capture first: grep -q exits early, and under pipefail readobj's broken pipe fails the check.
+loadcfg=$(llvm-readobj$LLVM_SUFFIX --coff-load-config "$dll")
+grep -q CHPEMetadataPointer <<<"$loadcfg" || { echo "no CHPE metadata: not ARM64EC" >&2; exit 1; }
 echo "ok"
