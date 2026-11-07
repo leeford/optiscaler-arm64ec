@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Thu, 5 Nov 2026 21:40:22 +0100
+Subject: [PATCH 05/18] Fix FSR 2.x on DX12 under vkd3d-proton without native
+ 16-bit ops
+
+FSR 2.1 and 2.2 select their FP16 shaders from MinPrecisionSupport alone.
+vkd3d-proton rejects those with E_INVALIDARG when the device doesn't report
+Native16BitShaderOpsSupported, so ffxFsr2ContextCreate failed. Hide 16-bit
+min precision during context creation in that case so the FP32 shaders are
+used. Real D3D12 is unaffected.
+
+Also serialize HookToDevice: two threads creating devices at once made the
+second detour transaction fail with 10DD, and its error path cleared the
+original function pointers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/hooks/D3D12_Hooks.cpp              | 28 +++++++++++++++++--
+ OptiScaler/hooks/D3D12_Hooks.h                | 12 ++++++++
+ .../upscalers/fsr2/FSR2Feature_Dx12.cpp       |  2 ++
+ .../fsr2_212/FSR2Feature_Dx12_212.cpp         |  2 ++
+ 4 files changed, 41 insertions(+), 3 deletions(-)
+
+diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
+index e323b5e..f4e07ad 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.cpp
++++ b/OptiScaler/hooks/D3D12_Hooks.cpp
+@@ -69,6 +69,7 @@ static PFN_CreateShaderResourceView o_CreateShaderResourceView = nullptr;
+ static PFN_CreateUnorderedAccessView o_CreateUnorderedAccessView = nullptr;
+ static PFN_CreateRenderTargetView o_CreateRenderTargetView = nullptr;
+ static PFN_CheckFeatureSupport o_CheckFeatureSupport = nullptr;
++static thread_local bool _hideMinPrecision16 = false;
+ static PFN_CreateCommittedResource o_CreateCommittedResource = nullptr;
+ static PFN_CreatePlacedResource o_CreatePlacedResource = nullptr;
+ static PFN_SetResidencyPriority o_SetResidencyPriority = nullptr;
+@@ -1265,6 +1266,8 @@ static void RestoreBindings(ID3D12GraphicsCommandList* cmdList, const RootBindin
+     }
+ }
+ 
++void D3D12Hooks::SetHideMinPrecision16(bool enable) { _hideMinPrecision16 = enable; }
++
+ void D3D12Hooks::SetRootSignatureTracking(bool enable) { t_upscalerActive = !enable; }
+ 
+ // A known list with nothing bound since Reset is restorable, there is just nothing to restore
+@@ -1822,6 +1825,21 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+ {
+     auto result = o_CheckFeatureSupport(device, Feature, pFeatureSupportData, FeatureSupportDataSize);
+ 
++    if (_hideMinPrecision16 && SUCCEEDED(result) && Feature == D3D12_FEATURE_D3D12_OPTIONS &&
++        IdentifyGpu::getPrimaryGpu().d3d12IsVkd3dProton)
++    {
++        D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4 {};
++
++        if (SUCCEEDED(o_CheckFeatureSupport(device, D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4))) &&
++            !options4.Native16BitShaderOpsSupported)
++        {
++            auto options = (D3D12_FEATURE_DATA_D3D12_OPTIONS*) pFeatureSupportData;
++            options->MinPrecisionSupport = (D3D12_SHADER_MIN_PRECISION_SUPPORT) (options->MinPrecisionSupport &
++                                                                                 ~D3D12_SHADER_MIN_PRECISION_SUPPORT_16_BIT);
++            LOG_DEBUG("Hiding 16-bit min precision, native 16-bit ops are not supported");
++        }
++    }
++
+     if (Config::Instance()->UESpoofIntelAtomics64.value_or_default() && Feature == D3D12_FEATURE_D3D12_OPTIONS9 &&
+         device == _intelD3D12Device)
+     {
+@@ -2358,6 +2376,10 @@ static HRESULT hkD3D12GetInterface(REFCLSID rclsid, REFIID riid, void** ppvDebug
+ 
+ static void HookToDevice(ID3D12Device* InDevice)
+ {
++    // The game can create devices from two threads at once, the second transaction would then fail
++    static std::recursive_mutex hookDeviceMutex;
++    std::scoped_lock lock(hookDeviceMutex);
++
+     if (InDevice == nullptr)
+         return;
+ 
+@@ -2436,13 +2458,13 @@ static void HookToDevice(ID3D12Device* InDevice)
+         if (o_SetResidencyPriority != nullptr)
+             DetourAttach(&(PVOID&) o_SetResidencyPriority, hkSetResidencyPriority);
+ 
++        if (o_CheckFeatureSupport != nullptr)
++            DetourAttach(&(PVOID&) o_CheckFeatureSupport, hkCheckFeatureSupport);
++
+         if (Config::Instance()->UESpoofIntelAtomics64.value_or_default())
+         {
+             LOG_DEBUG("UE spoofing for Intel Atomics64 enabled, applying detours");
+ 
+-            if (o_CheckFeatureSupport != nullptr)
+-                DetourAttach(&(PVOID&) o_CheckFeatureSupport, hkCheckFeatureSupport);
+-
+             if (o_CreateCommittedResource != nullptr)
+                 DetourAttach(&(PVOID&) o_CreateCommittedResource, hkCreateCommittedResource);
+ 
+diff --git a/OptiScaler/hooks/D3D12_Hooks.h b/OptiScaler/hooks/D3D12_Hooks.h
+index 14aec74..b56d1b5 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.h
++++ b/OptiScaler/hooks/D3D12_Hooks.h
+@@ -24,4 +24,16 @@ class D3D12Hooks
+     static void RestoreRoot(ID3D12GraphicsCommandList* cmdList);
+     static bool IsForcedHDRBuffer(ID3D12Resource* resource);
+     static DXGI_FORMAT ForcedHDRFormat();
++
++    // FSR 2.x picks its FP16 shaders from MinPrecisionSupport alone, which vkd3d-proton then rejects when
++    // the device lacks native 16-bit ops. Hides 16-bit precision from CheckFeatureSupport on the CALLING
++    // THREAD in that case, so FSR 2.x falls back to its FP32 shaders.
++    static void SetHideMinPrecision16(bool enable);
++};
++
++class ScopedHideMinPrecision16
++{
++  public:
++    ScopedHideMinPrecision16() { D3D12Hooks::SetHideMinPrecision16(true); }
++    ~ScopedHideMinPrecision16() { D3D12Hooks::SetHideMinPrecision16(false); }
+ };
+diff --git a/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp b/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
+index 37c0094..245d000 100644
+--- a/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
++++ b/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
+@@ -2,6 +2,7 @@
+ #include <Config.h>
+ #include "FSR2Feature_Dx12.h"
+ #include "MathUtils.h"
++#include <hooks/D3D12_Hooks.h>
+ 
+ using namespace OptiMath;
+ 
+@@ -428,6 +429,7 @@ bool FSR2FeatureDx12::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+         LOG_DEBUG("ffxFsr2ContextCreate!");
+ 
+         ScopedSkipHeapCapture skipHeapCapture {};
++        ScopedHideMinPrecision16 hideMinPrecision16 {};
+         auto ret = ffxFsr2ContextCreate(&_context, &_contextDesc);
+ 
+         if (ret != FFX_OK)
+diff --git a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
+index da112be..d8d6d1c 100644
+--- a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
++++ b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
+@@ -2,6 +2,7 @@
+ #include <Config.h>
+ #include "FSR2Feature_Dx12_212.h"
+ #include "MathUtils.h"
++#include <hooks/D3D12_Hooks.h>
+ 
+ using namespace OptiMath;
+ 
+@@ -437,6 +438,7 @@ bool FSR2FeatureDx12_212::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+         LOG_DEBUG("ffxFsr2ContextCreate!");
+ 
+         ScopedSkipHeapCapture skipHeapCapture {};
++        ScopedHideMinPrecision16 hideMinPrecision16 {};
+         auto ret = Fsr212::ffxFsr2ContextCreate212(&_context, &_contextDesc);
+ 
+         if (ret != Fsr212::FFX_OK)

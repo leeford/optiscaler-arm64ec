@@ -1,0 +1,1023 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Thu, 5 Nov 2026 15:49:02 +0100
+Subject: [PATCH 04/18] Add SGSR 2 upscaler backend for DX12
+
+Run the same Convert and Upscale shaders on DX12 and offer sgsr2 as a
+Dx12Upscaler. The constant calculation moves to SGSR2ConstantBuilder so
+both APIs share it.
+
+The passes keep their own constants and descriptor heaps per frame in
+flight, since the GPU can still be reading the previous frame's jitter.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler.ini                                |   2 +-
+ OptiScaler/OptiTypes.cpp                      |   2 +-
+ OptiScaler/OptiTypes.h                        |   2 +-
+ OptiScaler/menu/menu_common.cpp               |   3 +-
+ OptiScaler/upscalers/FeatureProvider_Dx12.cpp |   5 +
+ OptiScaler/upscalers/IFeature_Dx12.cpp        |   2 +-
+ OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp | 101 +++++++++
+ OptiScaler/upscalers/sgsr2/SGSR2Constants.h   |  52 +++++
+ .../upscalers/sgsr2/SGSR2Feature_Dx11.cpp     | 118 ++--------
+ .../upscalers/sgsr2/SGSR2Feature_Dx11.h       |  25 +--
+ .../upscalers/sgsr2/SGSR2Feature_Dx12.cpp     | 191 ++++++++++++++++
+ .../upscalers/sgsr2/SGSR2Feature_Dx12.h       |  23 ++
+ .../upscalers/sgsr2/SGSR2Passes_Dx12.cpp      | 206 ++++++++++++++++++
+ OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h |  53 +++++
+ .../sgsr2/shaders/sgsr2_common.hlsli          |   2 +-
+ 15 files changed, 661 insertions(+), 126 deletions(-)
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Constants.h
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.cpp
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.h
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
+ create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
+
+diff --git a/OptiScaler.ini b/OptiScaler.ini
+index 23cc971..593fb90 100644
+--- a/OptiScaler.ini
++++ b/OptiScaler.ini
+@@ -6,7 +6,7 @@
+ Dx11Upscaler=auto
+ 
+ ; Select Upscaler for Dx12 games
+-; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), dlss
++; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
+ ; or the name of a folder in the 'custom' folder
+ ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
+ Dx12Upscaler=auto
+diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
+index 6f1c6a2..2d9fb88 100644
+--- a/OptiScaler/OptiTypes.cpp
++++ b/OptiScaler/OptiTypes.cpp
+@@ -161,7 +161,7 @@ std::string UpscalerToCode(Upscaler upscaler)
+         return "dlssd";
+     case Upscaler::FSR31: // DX11 only
+         return "fsr31";
+-    case Upscaler::SGSR2: // DX11 only
++    case Upscaler::SGSR2:
+         return "sgsr2";
+     default: // Upscaler::Reset and unknown
+         return "";
+diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
+index f6bff03..08f1636 100644
+--- a/OptiScaler/OptiTypes.h
++++ b/OptiScaler/OptiTypes.h
+@@ -68,7 +68,7 @@ enum class Upscaler
+ 
+     DLSSD, // "dlssd", used for the DLSS-D/Ray Reconstruction upscaler+denoiser backend
+ 
+-    SGSR2, // "sgsr2", Snapdragon Game Super Resolution 2, native DX11
++    SGSR2, // "sgsr2", Snapdragon Game Super Resolution 2, native DX11 and DX12
+     Reset
+ };
+ 
+diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
+index bc6e661..9480d40 100644
+--- a/OptiScaler/menu/menu_common.cpp
++++ b/OptiScaler/menu/menu_common.cpp
+@@ -1297,7 +1297,8 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
+ void MenuCommon::AddDx12Backends(Upscaler upscaler)
+ {
+     RenderUpscalerCombo(API::DX12, upscaler,
+-                        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::DLSS });
++                        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::SGSR2,
++                          Upscaler::DLSS });
+ }
+ 
+ void MenuCommon::AddVulkanBackends(Upscaler upscaler)
+diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
+index 1454dc6..ad523ae 100644
+--- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
++++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
+@@ -12,6 +12,7 @@
+ #include "upscalers/fsr2_212/FSR2Feature_Dx12_212.h"
+ #include "upscalers/ffx/FFXFeature_Dx12.h"
+ #include "upscalers/xess/XeSSFeature_Dx12.h"
++#include "upscalers/sgsr2/SGSR2Feature_Dx12.h"
+ #include "FeatureProvider_Dx11.h"
+ #include <misc/IdentifyGpu.h>
+ #include <misc/CustomProviders.h>
+@@ -44,6 +45,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters, CustomProviders::IsFfx(custom) ? custom : "");
+         break;
+ 
++    case Upscaler::SGSR2:
++        *feature = std::make_unique<SGSR2FeatureDx12>(handleId, parameters);
++        break;
++
+     case Upscaler::DLSS:
+         if (CustomProviders::IsDlss(custom))
+         {
+diff --git a/OptiScaler/upscalers/IFeature_Dx12.cpp b/OptiScaler/upscalers/IFeature_Dx12.cpp
+index fb997ed..993a88f 100644
+--- a/OptiScaler/upscalers/IFeature_Dx12.cpp
++++ b/OptiScaler/upscalers/IFeature_Dx12.cpp
+@@ -83,7 +83,7 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
+ 
+     // Those upcalers don't have their own sharpness so always need to use RCAS when sharpness is set
+     auto upscaler = GetUpscalerType();
+-    bool useRcas = upscaler == Upscaler::XeSS ||
++    bool useRcas = upscaler == Upscaler::XeSS || upscaler == Upscaler::SGSR2 ||
+                    (upscaler == Upscaler::DLSS && Version() >= feature_version(2, 5, 1)) || upscaler == Upscaler::DLSSD;
+ 
+     if (!useRcas)
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
+new file mode 100644
+index 0000000..c94c7d3
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
+@@ -0,0 +1,101 @@
++#include <pch.h>
++#include <Config.h>
++#include "MathUtils.h"
++#include <upscalers/IFeature.h>
++#include "SGSR2Constants.h"
++
++using namespace OptiMath;
++
++namespace
++{
++// Per-pixel motion cancels this anywhere that moves, so it only applies to static pixels
++constexpr float MinLerpContribution = 0.3f;
++} // namespace
++
++SGSR2Constants SGSR2ConstantBuilder::Build(NVSDK_NGX_Parameter* InParameters, const SGSR2FrameInfo& frame)
++{
++    auto& cfg = *Config::Instance();
++
++    float jitterX = 0.0f;
++    float jitterY = 0.0f;
++    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &jitterX);
++    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &jitterY);
++
++    float mvScaleX = 1.0f;
++    float mvScaleY = 1.0f;
++    if (InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX) != NVSDK_NGX_Result_Success ||
++        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY) != NVSDK_NGX_Result_Success)
++    {
++        LOG_WARN("Can't get motion vector scales!");
++    }
++
++    float preExposure = 1.0f;
++    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &preExposure) != NVSDK_NGX_Result_Success ||
++        preExposure <= 0.0f)
++    {
++        preExposure = 1.0f;
++    }
++
++    float verticalFov = GetRadiansFromDeg(60.0f);
++    if (cfg.FsrVerticalFov.has_value())
++    {
++        verticalFov = GetRadiansFromDeg(cfg.FsrVerticalFov.value());
++    }
++    else if (cfg.FsrHorizontalFov.value_or_default() > 0.0f)
++    {
++        verticalFov = GetVerticalFovFromHorizontal(GetRadiansFromDeg(cfg.FsrHorizontalFov.value()),
++                                                   static_cast<float>(frame.targetWidth),
++                                                   static_cast<float>(frame.targetHeight));
++    }
++
++    const float renderW = static_cast<float>(frame.renderWidth);
++    const float renderH = static_cast<float>(frame.renderHeight);
++    const float displayW = static_cast<float>(frame.displayWidth);
++    const float displayH = static_cast<float>(frame.displayHeight);
++
++    SGSR2Constants constants {};
++    constants.renderSize[0] = frame.renderWidth;
++    constants.renderSize[1] = frame.renderHeight;
++    constants.displaySize[0] = frame.displayWidth;
++    constants.displaySize[1] = frame.displayHeight;
++    constants.renderSizeRcp[0] = 1.0f / renderW;
++    constants.renderSizeRcp[1] = 1.0f / renderH;
++    constants.displaySizeRcp[0] = 1.0f / displayW;
++    constants.displaySizeRcp[1] = 1.0f / displayH;
++    constants.jitterOffset[0] = jitterX;
++    constants.jitterOffset[1] = jitterY;
++
++    const float motionSizeW = frame.lowResMV ? renderW : displayW;
++    const float motionSizeH = frame.lowResMV ? renderH : displayH;
++    constants.motionUvScale[0] = mvScaleX / motionSizeW;
++    constants.motionUvScale[1] = mvScaleY / motionSizeH;
++    constants.motionTexelScale[0] = motionSizeW / renderW;
++    constants.motionTexelScale[1] = motionSizeH / renderH;
++
++    if (frame.jitteredMV && !frame.reset)
++    {
++        constants.jitterCancel[0] = (_prevJitter[0] - jitterX) / renderW;
++        constants.jitterCancel[1] = (_prevJitter[1] - jitterY) / renderH;
++    }
++
++    constants.depthSizeRcp[0] = 1.0f / static_cast<float>(frame.depthWidth);
++    constants.depthSizeRcp[1] = 1.0f / static_cast<float>(frame.depthHeight);
++
++    // History is tonemapped relative to the previous exposure
++    constants.preExposure =
++        _prevPreExposure > 0.0f && !frame.reset ? std::clamp(_prevPreExposure / preExposure, 0.25f, 4.0f) : 1.0f;
++    constants.cameraFovAngleHor = std::tan(verticalFov * 0.5f) * renderW / renderH;
++    constants.minLerpContribution = MinLerpContribution;
++
++    // NGX has no camera matrices to tell if the camera moved. Always taking all 9 samples costs a little more than
++    // upstream's moving camera path, and minLerpContribution is cancelled per pixel by the motion vectors
++    constants.sameCamera = 1;
++    constants.reset = frame.reset ? 1 : 0;
++    constants.depthInverted = frame.depthInverted ? 1 : 0;
++
++    _prevJitter[0] = jitterX;
++    _prevJitter[1] = jitterY;
++    _prevPreExposure = preExposure;
++
++    return constants;
++}
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Constants.h b/OptiScaler/upscalers/sgsr2/SGSR2Constants.h
+new file mode 100644
+index 0000000..c693a85
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Constants.h
+@@ -0,0 +1,52 @@
++#pragma once
++#include <cstdint>
++
++struct NVSDK_NGX_Parameter;
++
++constexpr uint32_t SGSR2ThreadGroupSize = 8;
++
++// Must match the Params cbuffer in sgsr2_common.hlsli
++struct SGSR2Constants
++{
++    uint32_t renderSize[2];
++    uint32_t displaySize[2];
++    float renderSizeRcp[2];
++    float displaySizeRcp[2];
++    float jitterOffset[2];
++    float motionUvScale[2];
++    float motionTexelScale[2];
++    float jitterCancel[2];
++    float depthSizeRcp[2];
++    float preExposure;
++    float cameraFovAngleHor;
++    float minLerpContribution;
++    uint32_t sameCamera;
++    uint32_t reset;
++    uint32_t depthInverted;
++};
++
++struct SGSR2FrameInfo
++{
++    uint32_t renderWidth;
++    uint32_t renderHeight;
++    uint32_t displayWidth;
++    uint32_t displayHeight;
++    uint32_t depthWidth;
++    uint32_t depthHeight;
++    uint32_t targetWidth;
++    uint32_t targetHeight;
++    bool lowResMV;
++    bool jitteredMV;
++    bool depthInverted;
++    bool reset;
++};
++
++// Keeps the values the next frame's constants depend on
++class SGSR2ConstantBuilder
++{
++    float _prevJitter[2] = {};
++    float _prevPreExposure = 0.0f;
++
++  public:
++    SGSR2Constants Build(NVSDK_NGX_Parameter* InParameters, const SGSR2FrameInfo& frame);
++};
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
+index 5b79136..e10a813 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
+@@ -1,7 +1,6 @@
+ #include <pch.h>
+ #include <Config.h>
+ #include <Util.h>
+-#include "MathUtils.h"
+ #include "SGSR2Feature_Dx11.h"
+ 
+ #include <shaders/Shader_Dx11.h>
+@@ -9,16 +8,6 @@
+ #include "generated/sgsr2_convert_cso.h"
+ #include "generated/sgsr2_upscale_cso.h"
+ 
+-using namespace OptiMath;
+-
+-namespace
+-{
+-constexpr uint32_t ThreadGroupSize = 8;
+-
+-// Per-pixel motion cancels this anywhere that moves, so it only applies to static pixels
+-constexpr float MinLerpContribution = 0.3f;
+-} // namespace
+-
+ SGSR2FeatureDx11::SGSR2FeatureDx11(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
+     : IFeature(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters)
+ {
+@@ -66,7 +55,7 @@ bool SGSR2FeatureDx11::InitInternal(ID3D11DeviceContext* InContext, NVSDK_NGX_Pa
+     }
+ 
+     D3D11_BUFFER_DESC bufferDesc {};
+-    bufferDesc.ByteWidth = (sizeof(Constants) + 15) & ~15u;
++    bufferDesc.ByteWidth = (sizeof(SGSR2Constants) + 15) & ~15u;
+     bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+     bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+     bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+@@ -202,8 +191,6 @@ bool SGSR2FeatureDx11::EvaluateInternal(ID3D11DeviceContext* InContext, NVSDK_NG
+     if (!IsInited())
+         return false;
+ 
+-    auto& cfg = *Config::Instance();
+-
+     ID3D11Resource* paramColor = nullptr;
+     ID3D11Resource* paramVelocity = nullptr;
+     ID3D11Resource* paramDepth = nullptr;
+@@ -307,86 +294,21 @@ bool SGSR2FeatureDx11::EvaluateInternal(ID3D11DeviceContext* InContext, NVSDK_NG
+     InParameters->Get(NVSDK_NGX_Parameter_Reset, &resetFlag);
+     const bool reset = resetFlag == 1 || recreated || _frameCount == 0;
+ 
+-    float jitterX = 0.0f;
+-    float jitterY = 0.0f;
+-    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &jitterX);
+-    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &jitterY);
+-
+-    float mvScaleX = 1.0f;
+-    float mvScaleY = 1.0f;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX) != NVSDK_NGX_Result_Success ||
+-        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY) != NVSDK_NGX_Result_Success)
+-    {
+-        LOG_WARN("Can't get motion vector scales!");
+-    }
+-
+-    float preExposure = 1.0f;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &preExposure) != NVSDK_NGX_Result_Success ||
+-        preExposure <= 0.0f)
+-    {
+-        preExposure = 1.0f;
+-    }
+-
+-    float verticalFov = GetRadiansFromDeg(60.0f);
+-    if (cfg.FsrVerticalFov.has_value())
+-    {
+-        verticalFov = GetRadiansFromDeg(cfg.FsrVerticalFov.value());
+-    }
+-    else if (cfg.FsrHorizontalFov.value_or_default() > 0.0f)
+-    {
+-        verticalFov = GetVerticalFovFromHorizontal(GetRadiansFromDeg(cfg.FsrHorizontalFov.value()),
+-                                                   static_cast<float>(TargetWidth()),
+-                                                   static_cast<float>(TargetHeight()));
+-    }
+-
+-    const float renderW = static_cast<float>(renderWidth);
+-    const float renderH = static_cast<float>(renderHeight);
+-    const float displayW = static_cast<float>(outputDesc.Width);
+-    const float displayH = static_cast<float>(outputDesc.Height);
+-
+-    Constants constants {};
+-    constants.renderSize[0] = renderWidth;
+-    constants.renderSize[1] = renderHeight;
+-    constants.displaySize[0] = outputDesc.Width;
+-    constants.displaySize[1] = outputDesc.Height;
+-    constants.renderSizeRcp[0] = 1.0f / renderW;
+-    constants.renderSizeRcp[1] = 1.0f / renderH;
+-    constants.displaySizeRcp[0] = 1.0f / displayW;
+-    constants.displaySizeRcp[1] = 1.0f / displayH;
+-    constants.jitterOffset[0] = jitterX;
+-    constants.jitterOffset[1] = jitterY;
+-
+-    const float motionSizeW = LowResMV() ? renderW : displayW;
+-    const float motionSizeH = LowResMV() ? renderH : displayH;
+-    constants.motionUvScale[0] = mvScaleX / motionSizeW;
+-    constants.motionUvScale[1] = mvScaleY / motionSizeH;
+-    constants.motionTexelScale[0] = motionSizeW / renderW;
+-    constants.motionTexelScale[1] = motionSizeH / renderH;
+-
+-    if (JitteredMV() && !reset)
+-    {
+-        constants.jitterCancel[0] = (_prevJitter[0] - jitterX) / renderW;
+-        constants.jitterCancel[1] = (_prevJitter[1] - jitterY) / renderH;
+-    }
+-
+-    constants.depthSizeRcp[0] = 1.0f / static_cast<float>(depthDesc.Width);
+-    constants.depthSizeRcp[1] = 1.0f / static_cast<float>(depthDesc.Height);
+-
+-    // History is tonemapped relative to the previous exposure
+-    constants.preExposure =
+-        _prevPreExposure > 0.0f && !reset ? std::clamp(_prevPreExposure / preExposure, 0.25f, 4.0f) : 1.0f;
+-    constants.cameraFovAngleHor = std::tan(verticalFov * 0.5f) * renderW / renderH;
+-    constants.minLerpContribution = MinLerpContribution;
+-
+-    // NGX has no camera matrices to tell if the camera moved. Always taking all 9 samples costs a little more than
+-    // upstream's moving camera path, and minLerpContribution is cancelled per pixel by the motion vectors
+-    constants.sameCamera = 1;
+-    constants.reset = reset ? 1 : 0;
+-    constants.depthInverted = DepthInverted() ? 1 : 0;
+-
+-    _prevJitter[0] = jitterX;
+-    _prevJitter[1] = jitterY;
+-    _prevPreExposure = preExposure;
++    SGSR2FrameInfo frame {};
++    frame.renderWidth = renderWidth;
++    frame.renderHeight = renderHeight;
++    frame.displayWidth = outputDesc.Width;
++    frame.displayHeight = outputDesc.Height;
++    frame.depthWidth = depthDesc.Width;
++    frame.depthHeight = depthDesc.Height;
++    frame.targetWidth = TargetWidth();
++    frame.targetHeight = TargetHeight();
++    frame.lowResMV = LowResMV();
++    frame.jitteredMV = JitteredMV();
++    frame.depthInverted = DepthInverted();
++    frame.reset = reset;
++
++    const auto constants = _constantBuilder.Build(InParameters, frame);
+ 
+     auto colorSrv = CreateInputSrv(colorTexture.Get());
+     auto depthSrv = CreateInputSrv(depthTexture.Get());
+@@ -437,8 +359,8 @@ bool SGSR2FeatureDx11::EvaluateInternal(ID3D11DeviceContext* InContext, NVSDK_NG
+         InContext->CSSetShader(_convertShader.Get(), nullptr, 0);
+         InContext->CSSetShaderResources(0, 3, srvs);
+         InContext->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+-        InContext->Dispatch((renderWidth + ThreadGroupSize - 1) / ThreadGroupSize,
+-                            (renderHeight + ThreadGroupSize - 1) / ThreadGroupSize, 1);
++        InContext->Dispatch((renderWidth + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize,
++                            (renderHeight + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize, 1);
+         InContext->CSSetUnorderedAccessViews(0, 2, nullUavs, nullptr);
+         InContext->CSSetShaderResources(0, 3, nullSrvs);
+     }
+@@ -453,8 +375,8 @@ bool SGSR2FeatureDx11::EvaluateInternal(ID3D11DeviceContext* InContext, NVSDK_NG
+         InContext->CSSetShader(_upscaleShader.Get(), nullptr, 0);
+         InContext->CSSetShaderResources(0, 3, srvs);
+         InContext->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+-        InContext->Dispatch((outputDesc.Width + ThreadGroupSize - 1) / ThreadGroupSize,
+-                            (outputDesc.Height + ThreadGroupSize - 1) / ThreadGroupSize, 1);
++        InContext->Dispatch((outputDesc.Width + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize,
++                            (outputDesc.Height + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize, 1);
+         InContext->CSSetUnorderedAccessViews(0, 2, nullUavs, nullptr);
+         InContext->CSSetShaderResources(0, 3, nullSrvs);
+     }
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.h b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.h
+index 5c7493d..287e582 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.h
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ #include <upscalers/IFeature_Dx11.h>
+ 
++#include "SGSR2Constants.h"
++
+ #include <wrl/client.h>
+ 
+ // Snapdragon Game Super Resolution 2, 2-pass compute variant
+@@ -9,26 +11,6 @@ class SGSR2FeatureDx11 : public IFeature_Dx11
+   private:
+     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+ 
+-    // Must match the Params cbuffer in sgsr2_common.hlsli
+-    struct Constants
+-    {
+-        uint32_t renderSize[2];
+-        uint32_t displaySize[2];
+-        float renderSizeRcp[2];
+-        float displaySizeRcp[2];
+-        float jitterOffset[2];
+-        float motionUvScale[2];
+-        float motionTexelScale[2];
+-        float jitterCancel[2];
+-        float depthSizeRcp[2];
+-        float preExposure;
+-        float cameraFovAngleHor;
+-        float minLerpContribution;
+-        uint32_t sameCamera;
+-        uint32_t reset;
+-        uint32_t depthInverted;
+-    };
+-
+     struct RenderTexture
+     {
+         ComPtr<ID3D11Texture2D> texture;
+@@ -53,8 +35,7 @@ class SGSR2FeatureDx11 : public IFeature_Dx11
+     uint32_t _bufferDisplayHeight = 0;
+     uint32_t _historyIndex = 0;
+ 
+-    float _prevJitter[2] = {};
+-    float _prevPreExposure = 0.0f;
++    SGSR2ConstantBuilder _constantBuilder;
+ 
+     bool CreateRenderTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, RenderTexture& out);
+     bool EnsureBuffers(uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth, uint32_t displayHeight,
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.cpp
+new file mode 100644
+index 0000000..e25a716
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.cpp
+@@ -0,0 +1,191 @@
++#include <pch.h>
++#include <Config.h>
++#include <State.h>
++#include "SGSR2Feature_Dx12.h"
++
++SGSR2FeatureDx12::SGSR2FeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
++    : IFeature(InHandleId, InParameters), IFeature_Dx12(InHandleId, InParameters)
++{
++    _initParameters = SetInitParameters(InParameters);
++    _moduleLoaded = true;
++}
++
++bool SGSR2FeatureDx12::InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
++{
++    LOG_FUNC();
++
++    if (IsInited())
++        return true;
++
++    if (Device == nullptr)
++    {
++        LOG_ERROR("Device is null!");
++        return false;
++    }
++
++    auto& cfg = *Config::Instance();
++
++    float outputScale = 1.0f;
++    if (cfg.OutputScalingEnabled.value_or_default() && (LowResMV() || RenderWidth() == DisplayWidth()))
++    {
++        outputScale = std::clamp(cfg.OutputScalingMultiplier.value_or_default(), 0.5f, 3.0f);
++        cfg.OutputScalingMultiplier.set_volatile_value(outputScale);
++    }
++
++    _targetWidth = static_cast<unsigned int>(DisplayWidth() * outputScale);
++    _targetHeight = static_cast<unsigned int>(DisplayHeight() * outputScale);
++
++    _passes = std::make_unique<SGSR2Passes_Dx12>("SGSR2", Device);
++
++    if (!_passes->IsInit())
++    {
++        LOG_ERROR("Can't create the SGSR 2 passes");
++        _passes.reset();
++        return false;
++    }
++
++    SetInit(true);
++    return true;
++}
++
++bool SGSR2FeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
++{
++    LOG_FUNC();
++
++    if (!IsInited() || _passes == nullptr)
++        return false;
++
++    auto& cfg = *Config::Instance();
++    auto& state = State::Instance();
++
++    ID3D12Resource* paramColor = nullptr;
++    ID3D12Resource* paramVelocity = nullptr;
++    ID3D12Resource* paramDepth = nullptr;
++    ID3D12Resource* paramOutput = nullptr;
++
++    const auto getResource = [InParameters](const char* name, ID3D12Resource** resource)
++    {
++        if (InParameters->Get(name, resource) != NVSDK_NGX_Result_Success)
++            InParameters->Get(name, (void**) resource);
++    };
++
++    getResource(NVSDK_NGX_Parameter_Color, &paramColor);
++    getResource(NVSDK_NGX_Parameter_MotionVectors, &paramVelocity);
++    getResource(NVSDK_NGX_Parameter_Depth, &paramDepth);
++    getResource(NVSDK_NGX_Parameter_Output, &paramOutput);
++
++    _hasColor = paramColor != nullptr;
++    _hasMV = paramVelocity != nullptr;
++    _hasDepth = paramDepth != nullptr;
++    _hasOutput = paramOutput != nullptr;
++
++    if (!_hasColor || !_hasMV || !_hasDepth || !_hasOutput)
++    {
++        LOG_ERROR("Missing input! color: {}, motion: {}, depth: {}, output: {}", _hasColor, _hasMV, _hasDepth,
++                  _hasOutput);
++        return false;
++    }
++
++    const auto colorDesc = paramColor->GetDesc();
++    const auto velocityDesc = paramVelocity->GetDesc();
++    const auto depthDesc = paramDepth->GetDesc();
++    const auto outputDesc = paramOutput->GetDesc();
++
++    if ((colorDesc.Flags | velocityDesc.Flags | depthDesc.Flags) & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE)
++    {
++        LOG_ERROR("Inputs can't be read by a shader, color: {:x}, motion: {:x}, depth: {:x}",
++                  static_cast<int>(colorDesc.Flags), static_cast<int>(velocityDesc.Flags),
++                  static_cast<int>(depthDesc.Flags));
++        return false;
++    }
++
++    if (!(outputDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
++    {
++        LOG_ERROR("Output has no unordered access, flags: {:x}", static_cast<int>(outputDesc.Flags));
++        return false;
++    }
++
++    unsigned int renderWidth = 0;
++    unsigned int renderHeight = 0;
++    GetRenderResolution(InParameters, &renderWidth, &renderHeight);
++
++    if (renderWidth == 0 || renderHeight == 0)
++    {
++        LOG_ERROR("Invalid render resolution: {}x{}", renderWidth, renderHeight);
++        return false;
++    }
++
++    const auto displayWidth = static_cast<uint32_t>(outputDesc.Width);
++    const auto displayHeight = static_cast<uint32_t>(outputDesc.Height);
++
++    bool recreated = false;
++    if (!_passes->EnsureTextures(paramOutput, renderWidth, renderHeight, displayWidth, displayHeight, recreated))
++        return false;
++
++    if (recreated)
++    {
++        LOG_INFO("Render {}x{}, display {}x{}, formats color: {}, motion: {}, depth: {}, output: {}", renderWidth,
++                 renderHeight, displayWidth, displayHeight, static_cast<int>(colorDesc.Format),
++                 static_cast<int>(velocityDesc.Format), static_cast<int>(depthDesc.Format),
++                 static_cast<int>(outputDesc.Format));
++    }
++
++    unsigned int resetFlag = 0;
++    InParameters->Get(NVSDK_NGX_Parameter_Reset, &resetFlag);
++
++    SGSR2FrameInfo frame {};
++    frame.renderWidth = renderWidth;
++    frame.renderHeight = renderHeight;
++    frame.displayWidth = displayWidth;
++    frame.displayHeight = displayHeight;
++    frame.depthWidth = static_cast<uint32_t>(depthDesc.Width);
++    frame.depthHeight = depthDesc.Height;
++    frame.targetWidth = TargetWidth();
++    frame.targetHeight = TargetHeight();
++    frame.lowResMV = LowResMV();
++    frame.jitteredMV = JitteredMV();
++    frame.depthInverted = DepthInverted();
++    frame.reset = resetFlag == 1 || recreated || _frameCount == 0;
++
++    const auto constants = _constantBuilder.Build(InParameters, frame);
++
++    const bool isUnreal = state.NVNGX_Engine == NVSDK_NGX_ENGINE_TYPE_UNREAL ||
++                          state.gameEngine == GameEngineType::Unreal || state.gameQuirks & GameQuirk::ForceUnrealEngine;
++
++    constexpr auto ReadState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++
++    // Unreal doesn't move the inputs to the state NGX asks for
++    if (!cfg.ColorResourceBarrier.has_value() && isUnreal)
++        cfg.ColorResourceBarrier.set_volatile_value(D3D12_RESOURCE_STATE_RENDER_TARGET);
++
++    if (!cfg.MVResourceBarrier.has_value() && isUnreal)
++        cfg.MVResourceBarrier.set_volatile_value(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++    const auto transition = [&](ID3D12Resource* resource, auto& barrier, D3D12_RESOURCE_STATES target, bool undo)
++    {
++        if (!barrier.has_value())
++            return;
++
++        const auto configured = static_cast<D3D12_RESOURCE_STATES>(barrier.value());
++        ResourceBarrier(InCommandList, resource, undo ? target : configured, undo ? configured : target);
++    };
++
++    const auto transitionAll = [&](bool undo)
++    {
++        transition(paramColor, cfg.ColorResourceBarrier, ReadState, undo);
++        transition(paramVelocity, cfg.MVResourceBarrier, ReadState, undo);
++        transition(paramDepth, cfg.DepthResourceBarrier, ReadState, undo);
++        transition(paramOutput, cfg.OutputResourceBarrier, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, undo);
++    };
++
++    transitionAll(false);
++
++    const SGSR2Passes_Dx12::Inputs inputs { paramColor, paramDepth, paramVelocity, paramOutput };
++    const auto result = _passes->Dispatch(InCommandList, inputs, constants);
++
++    transitionAll(true);
++
++    _frameCount++;
++
++    return result;
++}
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.h b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.h
+new file mode 100644
+index 0000000..1976dba
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.h
+@@ -0,0 +1,23 @@
++#pragma once
++#include <upscalers/IFeature_Dx12.h>
++
++#include "SGSR2Constants.h"
++#include "SGSR2Passes_Dx12.h"
++
++// Snapdragon Game Super Resolution 2, 2-pass compute variant
++class SGSR2FeatureDx12 : public IFeature_Dx12
++{
++  private:
++    std::unique_ptr<SGSR2Passes_Dx12> _passes;
++    SGSR2ConstantBuilder _constantBuilder;
++
++  public:
++    SGSR2FeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters);
++
++    bool InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
++    bool EvaluateInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
++
++    feature_version Version() override { return { 2, 0, 0 }; }
++    Upscaler GetUpscalerType() const final { return Upscaler::SGSR2; }
++    bool IsWithDx12() override { return false; }
++};
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
+new file mode 100644
+index 0000000..0216670
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
+@@ -0,0 +1,206 @@
++#include <pch.h>
++#include <Config.h>
++#include <State.h>
++#include "SGSR2Passes_Dx12.h"
++
++#include "generated/sgsr2_convert_cso.h"
++#include "generated/sgsr2_upscale_cso.h"
++
++namespace
++{
++constexpr D3D12_RESOURCE_STATES ReadState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++constexpr D3D12_RESOURCE_STATES WriteState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
++
++D3D12_STATIC_SAMPLER_DESC ClampSampler(UINT shaderRegister, D3D12_FILTER filter)
++{
++    D3D12_STATIC_SAMPLER_DESC sampler {};
++    sampler.Filter = filter;
++    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
++    sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
++    sampler.MaxLOD = D3D12_FLOAT32_MAX;
++    sampler.ShaderRegister = shaderRegister;
++    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    return sampler;
++}
++
++D3D12_RESOURCE_BARRIER Transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
++{
++    return CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
++}
++} // namespace
++
++SGSR2Passes_Dx12::SGSR2Passes_Dx12(std::string InName, ID3D12Device* InDevice) : Shader_Dx12(InName, InDevice)
++{
++    if (InDevice == nullptr)
++    {
++        LOG_ERROR("InDevice is nullptr!");
++        return;
++    }
++
++    const D3D12_STATIC_SAMPLER_DESC samplers[] = {
++        ClampSampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR),
++        ClampSampler(1, D3D12_FILTER_MIN_MAG_MIP_POINT),
++    };
++
++    if (!SetupRootSignature(InDevice, 3, 2, 1, 0, 0, _countof(samplers), samplers))
++    {
++        LOG_ERROR("[{0}] Failed to setup root signature", _name);
++        return;
++    }
++
++    constexpr UINT alignTo = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT - 1;
++    const auto desc = CD3DX12_RESOURCE_DESC::Buffer((sizeof(SGSR2Constants) + alignTo) & ~alignTo);
++    const auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
++
++    for (auto& frameConstants : _frameConstants)
++    {
++        const auto hr =
++            InDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
++                                              D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&frameConstants));
++
++        if (FAILED(hr))
++        {
++            LOG_ERROR("[{0}] CreateCommittedResource error {1:x}", _name, static_cast<unsigned long>(hr));
++            return;
++        }
++    }
++
++    if (!CreateComputePipeline(InDevice, &_pipelineState, sgsr2_convert_cso, sizeof(sgsr2_convert_cso), nullptr) ||
++        !CreateComputePipeline(InDevice, &_upscalePipeline, sgsr2_upscale_cso, sizeof(sgsr2_upscale_cso), nullptr))
++    {
++        LOG_ERROR("[{0}] Failed to create compute pipelines", _name);
++        return;
++    }
++
++    _init = InitHeaps(InDevice, _heaps, _countof(_heaps));
++}
++
++SGSR2Passes_Dx12::~SGSR2Passes_Dx12()
++{
++    if (State::Instance().isShuttingDown)
++        return;
++
++    for (auto& heap : _heaps)
++        heap.ReleaseHeaps();
++
++    for (auto& frameConstants : _frameConstants)
++        DeferredRelease::Release(frameConstants);
++
++    DeferredRelease::Release(_upscalePipeline);
++    DeferredRelease::Release(_motionDepthClip);
++    DeferredRelease::Release(_colorLuma);
++    DeferredRelease::Release(_history[0]);
++    DeferredRelease::Release(_history[1]);
++}
++
++bool SGSR2Passes_Dx12::EnsureTextures(ID3D12Resource* InSource, uint32_t renderWidth, uint32_t renderHeight,
++                                      uint32_t displayWidth, uint32_t displayHeight, bool& recreated)
++{
++    recreated = renderWidth != _renderWidth || renderHeight != _renderHeight || displayWidth != _displayWidth ||
++                displayHeight != _displayHeight;
++
++    const auto create = [&](ID3D12Resource** texture, uint32_t width, uint32_t height, DXGI_FORMAT format)
++    {
++        return Shader_Dx12::CreateBufferResource(_device, InSource, WriteState, texture,
++                                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, width, height, format);
++    };
++
++    if (!create(&_motionDepthClip, renderWidth, renderHeight, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
++        !create(&_colorLuma, renderWidth, renderHeight, DXGI_FORMAT_R32_UINT) ||
++        !create(&_history[0], displayWidth, displayHeight, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
++        !create(&_history[1], displayWidth, displayHeight, DXGI_FORMAT_R16G16B16A16_FLOAT))
++    {
++        _renderWidth = 0;
++        return false;
++    }
++
++    _renderWidth = renderWidth;
++    _renderHeight = renderHeight;
++    _displayWidth = displayWidth;
++    _displayHeight = displayHeight;
++
++    return true;
++}
++
++bool SGSR2Passes_Dx12::Dispatch(ID3D12GraphicsCommandList* InCmdList, const Inputs& inputs,
++                                const SGSR2Constants& constants)
++{
++    if (!_init || InCmdList == nullptr || _motionDepthClip == nullptr)
++        return false;
++
++    _counter = (_counter + 1) % FramesInFlight;
++
++    FrameDescriptorHeap& convertHeap = _heaps[_counter * HeapsPerFrame];
++    FrameDescriptorHeap& upscaleHeap = _heaps[_counter * HeapsPerFrame + 1];
++    ID3D12Resource* frameConstants = _frameConstants[_counter];
++
++    ID3D12Resource* prevHistory = _history[_historyIndex];
++    ID3D12Resource* nextHistory = _history[_historyIndex ^ 1];
++
++    CreateShaderResourceView(_device, inputs.color, convertHeap.GetSrvCPU(0));
++    CreateShaderResourceView(_device, inputs.depth, convertHeap.GetSrvCPU(1));
++    CreateShaderResourceView(_device, inputs.velocity, convertHeap.GetSrvCPU(2));
++    CreateUnorderedAccessView(_device, _motionDepthClip, convertHeap.GetUavCPU(0), 0);
++    CreateUnorderedAccessView(_device, _colorLuma, convertHeap.GetUavCPU(1), 0);
++
++    CreateShaderResourceView(_device, prevHistory, upscaleHeap.GetSrvCPU(0));
++    CreateShaderResourceView(_device, _motionDepthClip, upscaleHeap.GetSrvCPU(1));
++    CreateShaderResourceView(_device, _colorLuma, upscaleHeap.GetSrvCPU(2));
++    CreateUnorderedAccessView(_device, inputs.output, upscaleHeap.GetUavCPU(0), 0);
++    CreateUnorderedAccessView(_device, nextHistory, upscaleHeap.GetUavCPU(1), 0);
++
++    if (!CreateConstantsBuffer(_device, frameConstants, constants, convertHeap.GetCbvCPU(0)) ||
++        !CreateConstantsBuffer(_device, frameConstants, constants, upscaleHeap.GetCbvCPU(0)))
++    {
++        LOG_ERROR("[{0}] Failed to create a constants buffer", _name);
++        return false;
++    }
++
++
++    {
++        ID3D12DescriptorHeap* heaps[] = { convertHeap.GetHeapCSU() };
++        InCmdList->SetDescriptorHeaps(_countof(heaps), heaps);
++        InCmdList->SetComputeRootSignature(_rootSignature);
++        InCmdList->SetPipelineState(_pipelineState);
++        InCmdList->SetComputeRootDescriptorTable(0, convertHeap.GetTableGPUStart());
++        InCmdList->Dispatch((constants.renderSize[0] + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize,
++                            (constants.renderSize[1] + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize, 1);
++    }
++
++    {
++        const D3D12_RESOURCE_BARRIER toRead[] = {
++            Transition(_motionDepthClip, WriteState, ReadState),
++            Transition(_colorLuma, WriteState, ReadState),
++            Transition(prevHistory, WriteState, ReadState),
++        };
++        InCmdList->ResourceBarrier(_countof(toRead), toRead);
++    }
++
++    {
++        ID3D12DescriptorHeap* heaps[] = { upscaleHeap.GetHeapCSU() };
++        InCmdList->SetDescriptorHeaps(_countof(heaps), heaps);
++        InCmdList->SetComputeRootSignature(_rootSignature);
++        InCmdList->SetPipelineState(_upscalePipeline);
++        InCmdList->SetComputeRootDescriptorTable(0, upscaleHeap.GetTableGPUStart());
++        InCmdList->Dispatch((constants.displaySize[0] + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize,
++                            (constants.displaySize[1] + SGSR2ThreadGroupSize - 1) / SGSR2ThreadGroupSize, 1);
++    }
++
++    {
++        const D3D12_RESOURCE_BARRIER toWrite[] = {
++            Transition(_motionDepthClip, ReadState, WriteState),
++            Transition(_colorLuma, ReadState, WriteState),
++            Transition(prevHistory, ReadState, WriteState),
++            CD3DX12_RESOURCE_BARRIER::UAV(inputs.output),
++            CD3DX12_RESOURCE_BARRIER::UAV(nextHistory),
++        };
++        InCmdList->ResourceBarrier(_countof(toWrite), toWrite);
++    }
++
++    _historyIndex ^= 1;
++
++    return true;
++}
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
+new file mode 100644
+index 0000000..ebfae99
+--- /dev/null
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
+@@ -0,0 +1,53 @@
++#pragma once
++#include <d3d12.h>
++#include <d3dx/d3dx12.h>
++#include <shaders/Shader_Dx12Utils.h>
++#include <shaders/Shader_Dx12.h>
++
++#include "SGSR2Constants.h"
++
++// The Convert and Upscale passes, which share a root signature and swap two history textures
++class SGSR2Passes_Dx12 : public Shader_Dx12
++{
++  public:
++    struct Inputs
++    {
++        ID3D12Resource* color = nullptr;
++        ID3D12Resource* depth = nullptr;
++        ID3D12Resource* velocity = nullptr;
++        ID3D12Resource* output = nullptr;
++    };
++
++  private:
++    // Every frame needs its own heaps and constants as the GPU can still be reading the previous ones
++    static constexpr uint32_t FramesInFlight = 8;
++    static constexpr uint32_t HeapsPerFrame = 2;
++
++    FrameDescriptorHeap _heaps[FramesInFlight * HeapsPerFrame];
++    ID3D12Resource* _frameConstants[FramesInFlight] = {};
++
++    ID3D12PipelineState* _upscalePipeline = nullptr;
++
++    // All of them stay in UNORDERED_ACCESS between frames
++    ID3D12Resource* _motionDepthClip = nullptr;
++    ID3D12Resource* _colorLuma = nullptr;
++    ID3D12Resource* _history[2] = {};
++
++    uint32_t _renderWidth = 0;
++    uint32_t _renderHeight = 0;
++    uint32_t _displayWidth = 0;
++    uint32_t _displayHeight = 0;
++    uint32_t _historyIndex = 0;
++
++  public:
++    // Render and display sizes come from constants, the source only provides heap properties
++    bool EnsureTextures(ID3D12Resource* InSource, uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth,
++                        uint32_t displayHeight, bool& recreated);
++
++    // Inputs have to be readable by compute shaders and the output in UNORDERED_ACCESS
++    bool Dispatch(ID3D12GraphicsCommandList* InCmdList, const Inputs& inputs, const SGSR2Constants& constants);
++
++    SGSR2Passes_Dx12(std::string InName, ID3D12Device* InDevice);
++
++    ~SGSR2Passes_Dx12();
++};
+diff --git a/OptiScaler/upscalers/sgsr2/shaders/sgsr2_common.hlsli b/OptiScaler/upscalers/sgsr2/shaders/sgsr2_common.hlsli
+index c1ecbd3..ff2d983 100644
+--- a/OptiScaler/upscalers/sgsr2/shaders/sgsr2_common.hlsli
++++ b/OptiScaler/upscalers/sgsr2/shaders/sgsr2_common.hlsli
+@@ -9,7 +9,7 @@
+ // - Inverted depth is normalized on read instead of swapping min and max through the depth logic.
+ // - Y is handled as upstream's REQUEST_NDC_Y_UP, which matches D3D texture coordinates.
+ 
+-// Must match SGSR2FeatureDx11::Constants
++// Must match SGSR2Constants
+ cbuffer Params : register(b0)
+ {
+     uint2 renderSize;

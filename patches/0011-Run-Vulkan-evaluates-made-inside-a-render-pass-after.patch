@@ -1,0 +1,411 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 11:32:45 +0100
+Subject: [PATCH 11/18] Run Vulkan evaluates made inside a render pass after it
+ ends
+
+Unity's plugin events reach NGX on a secondary command buffer continuing
+a render pass, where compute work isn't allowed and Turnip silently
+drops it. Keep such an evaluate and run it on the primary command buffer
+right after its render pass ends.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/NVNGX_Parameter.cpp               |   6 +
+ OptiScaler/NVNGX_Parameter.h                 |   2 +
+ OptiScaler/hooks/Vulkan_DeferredEvaluate.cpp | 194 +++++++++++++++++++
+ OptiScaler/hooks/Vulkan_DeferredEvaluate.h   |  29 +++
+ OptiScaler/hooks/VulkanwDx12_Hooks.cpp       |  14 ++
+ OptiScaler/inputs/NVNGX_DLSS_Vk.cpp          |   9 +
+ 6 files changed, 254 insertions(+)
+ create mode 100644 OptiScaler/hooks/Vulkan_DeferredEvaluate.cpp
+ create mode 100644 OptiScaler/hooks/Vulkan_DeferredEvaluate.h
+
+diff --git a/OptiScaler/NVNGX_Parameter.cpp b/OptiScaler/NVNGX_Parameter.cpp
+index 1473ffb..139656a 100644
+--- a/OptiScaler/NVNGX_Parameter.cpp
++++ b/OptiScaler/NVNGX_Parameter.cpp
+@@ -356,6 +356,12 @@ void NVNGX_Parameters::Reset()
+     LOG_DEBUG("End");
+ }
+ 
++void NVNGX_Parameters::CopyValuesFrom(const NVNGX_Parameters& other)
++{
++    std::scoped_lock lock(m_mutex, other.m_mutex);
++    m_values = other.m_values;
++}
++
+ std::vector<std::string> NVNGX_Parameters::enumerate() const
+ {
+     const std::lock_guard<std::mutex> lock(m_mutex);
+diff --git a/OptiScaler/NVNGX_Parameter.h b/OptiScaler/NVNGX_Parameter.h
+index c91c5b3..7207a29 100644
+--- a/OptiScaler/NVNGX_Parameter.h
++++ b/OptiScaler/NVNGX_Parameter.h
+@@ -225,6 +225,8 @@ struct NVNGX_Parameters : public NVSDK_NGX_Parameter
+ 
+     void Reset() override;
+ 
++    void CopyValuesFrom(const NVNGX_Parameters& other);
++
+     std::vector<std::string> enumerate() const;
+ 
+   private:
+diff --git a/OptiScaler/hooks/Vulkan_DeferredEvaluate.cpp b/OptiScaler/hooks/Vulkan_DeferredEvaluate.cpp
+new file mode 100644
+index 0000000..0807b0d
+--- /dev/null
++++ b/OptiScaler/hooks/Vulkan_DeferredEvaluate.cpp
+@@ -0,0 +1,194 @@
++#include <pch.h>
++
++#include "Vulkan_DeferredEvaluate.h"
++
++#include <NVNGX_Parameter.h>
++#include <nvsdk_ngx_vk.h>
++
++#include <algorithm>
++#include <atomic>
++#include <list>
++#include <memory>
++#include <mutex>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
++
++namespace
++{
++struct DeferredCall
++{
++    NVSDK_NGX_Handle handle {};
++    std::unique_ptr<NVNGX_Parameters> parameters;
++    // The caller's resource structs don't have to outlive the call
++    std::list<NVSDK_NGX_Resource_VK> resources;
++};
++
++using DeferredCalls = std::vector<DeferredCall>;
++
++std::mutex mutex;
++std::unordered_set<VkCommandBuffer> renderPassContinuing;
++std::unordered_map<VkCommandBuffer, DeferredCalls> recorded; // By secondary, until it's executed
++std::unordered_map<VkCommandBuffer, DeferredCalls> executed; // By primary, until its render pass ends
++
++// Render pass hooks are hot, this keeps them from taking the lock when nothing is waiting
++std::atomic<size_t> waiting = 0;
++
++const char* const resourceKeys[] = {
++    NVSDK_NGX_Parameter_Color,           NVSDK_NGX_Parameter_MotionVectors,
++    NVSDK_NGX_Parameter_Depth,           NVSDK_NGX_Parameter_Output,
++    NVSDK_NGX_Parameter_ExposureTexture, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
++    "FSR.transparencyAndComposition",    "FSR.reactive"
++};
++
++// mutex is held
++void Discard(VkCommandBuffer commandBuffer)
++{
++    for (auto map : { &recorded, &executed })
++    {
++        if (auto it = map->find(commandBuffer); it != map->end())
++        {
++            waiting -= it->second.size();
++            map->erase(it);
++        }
++    }
++}
++} // namespace
++
++void VkDeferredEvaluate::OnBeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo* pBeginInfo)
++{
++    std::scoped_lock lock(mutex);
++
++    if (pBeginInfo != nullptr && (pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT) != 0)
++        renderPassContinuing.insert(commandBuffer);
++    else
++        renderPassContinuing.erase(commandBuffer);
++
++    Discard(commandBuffer);
++}
++
++bool VkDeferredEvaluate::ContinuesRenderPass(VkCommandBuffer commandBuffer)
++{
++    std::scoped_lock lock(mutex);
++    return renderPassContinuing.contains(commandBuffer);
++}
++
++bool VkDeferredEvaluate::Defer(VkCommandBuffer commandBuffer, const NVSDK_NGX_Handle* handle,
++                               NVSDK_NGX_Parameter* parameters)
++{
++    // Only OptiScaler's own tables carry this
++    int ownTable = 0;
++    if (parameters == nullptr || parameters->Get("OptiScaler", &ownTable) != NVSDK_NGX_Result_Success)
++    {
++        LOG_ERROR("Parameters of {:X} can't be copied", (size_t) commandBuffer);
++        return false;
++    }
++
++    auto source = static_cast<NVNGX_Parameters*>(parameters);
++
++    DeferredCall call {};
++    call.handle = *handle;
++    call.parameters = std::make_unique<NVNGX_Parameters>(source->Api, true);
++    call.parameters->CopyValuesFrom(*source);
++
++    for (auto key : resourceKeys)
++    {
++        NVSDK_NGX_Resource_VK* resource = nullptr;
++        if (source->Get(key, (void**) &resource) != NVSDK_NGX_Result_Success || resource == nullptr)
++            continue;
++
++        call.parameters->Set(key, (void*) &call.resources.emplace_back(*resource));
++    }
++
++    std::scoped_lock lock(mutex);
++    recorded[commandBuffer].push_back(std::move(call));
++    waiting++;
++
++    return true;
++}
++
++void VkDeferredEvaluate::OnExecuteCommands(VkCommandBuffer primary, uint32_t count,
++                                           const VkCommandBuffer* pCommandBuffers)
++{
++    if (waiting == 0)
++        return;
++
++    std::scoped_lock lock(mutex);
++
++    for (uint32_t i = 0; i < count; i++)
++    {
++        auto it = recorded.find(pCommandBuffers[i]);
++        if (it == recorded.end())
++            continue;
++
++        auto& calls = executed[primary];
++        std::move(it->second.begin(), it->second.end(), std::back_inserter(calls));
++        recorded.erase(it);
++    }
++}
++
++void VkDeferredEvaluate::OnRenderPassEnded(VkCommandBuffer primary, PFN_vkCmdPipelineBarrier cmdPipelineBarrier)
++{
++    if (waiting == 0)
++        return;
++
++    DeferredCalls calls;
++    {
++        std::scoped_lock lock(mutex);
++
++        auto it = executed.find(primary);
++        if (it == executed.end())
++            return;
++
++        calls = std::move(it->second);
++        executed.erase(it);
++        waiting -= calls.size();
++    }
++
++    // Render pass dependencies don't have to cover compute, and whatever reads the output was recorded without seeing
++    // the upscaler's writes
++    VkMemoryBarrier barrier { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
++    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
++    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++
++    const auto fullBarrier = [&]
++    {
++        cmdPipelineBarrier(primary, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
++                           &barrier, 0, nullptr, 0, nullptr);
++    };
++
++    fullBarrier();
++
++    for (auto& call : calls)
++    {
++        auto result = NVSDK_NGX_VULKAN_EvaluateFeature(primary, &call.handle, call.parameters.get(), nullptr);
++        if (result != NVSDK_NGX_Result_Success)
++            LOG_ERROR("Deferred evaluate of {} failed: {:X}", call.handle.Id, (UINT) result);
++    }
++
++    fullBarrier();
++}
++
++void VkDeferredEvaluate::Forget(VkCommandBuffer commandBuffer)
++{
++    std::scoped_lock lock(mutex);
++
++    renderPassContinuing.erase(commandBuffer);
++    Discard(commandBuffer);
++}
++
++void VkDeferredEvaluate::ForgetFeature(unsigned int handleId)
++{
++    if (waiting == 0)
++        return;
++
++    std::scoped_lock lock(mutex);
++
++    for (auto map : { &recorded, &executed })
++    {
++        for (auto& [commandBuffer, calls] : *map)
++        {
++            waiting -= std::erase_if(calls, [&](const DeferredCall& call) { return call.handle.Id == handleId; });
++        }
++    }
++}
+diff --git a/OptiScaler/hooks/Vulkan_DeferredEvaluate.h b/OptiScaler/hooks/Vulkan_DeferredEvaluate.h
+new file mode 100644
+index 0000000..d6a75e4
+--- /dev/null
++++ b/OptiScaler/hooks/Vulkan_DeferredEvaluate.h
+@@ -0,0 +1,29 @@
++#pragma once
++
++#include <pch.h>
++
++#include <vulkan/vulkan.h>
++
++#include <nvsdk_ngx.h>
++
++// Vulkan doesn't allow compute work inside a render pass, but Unity hands its plugin events a secondary command
++// buffer that continues one. Drivers are free to drop that work, Turnip does it silently. So an Evaluate made on such a
++// command buffer is kept and runs on the primary command buffer that executes it, right after its render pass ends.
++class VkDeferredEvaluate
++{
++  public:
++    static void OnBeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo* pBeginInfo);
++
++    // True when the command buffer continues a render pass of the primary command buffer executing it
++    static bool ContinuesRenderPass(VkCommandBuffer commandBuffer);
++
++    // Keeps a copy of the parameters, returns false when they can't be copied
++    static bool Defer(VkCommandBuffer commandBuffer, const NVSDK_NGX_Handle* handle, NVSDK_NGX_Parameter* parameters);
++
++    static void OnExecuteCommands(VkCommandBuffer primary, uint32_t count, const VkCommandBuffer* pCommandBuffers);
++    static void OnRenderPassEnded(VkCommandBuffer primary, PFN_vkCmdPipelineBarrier cmdPipelineBarrier);
++
++    // The command buffer's recording is gone, so are the evaluates it held
++    static void Forget(VkCommandBuffer commandBuffer);
++    static void ForgetFeature(unsigned int handleId);
++};
+diff --git a/OptiScaler/hooks/VulkanwDx12_Hooks.cpp b/OptiScaler/hooks/VulkanwDx12_Hooks.cpp
+index 374c0a6..e9307ee 100644
+--- a/OptiScaler/hooks/VulkanwDx12_Hooks.cpp
++++ b/OptiScaler/hooks/VulkanwDx12_Hooks.cpp
+@@ -4,6 +4,7 @@
+ #include <unordered_set>
+ 
+ #include "VulkanwDx12_Hooks.h"
++#include "Vulkan_DeferredEvaluate.h"
+ 
+ #include <State.h>
+ #include <Config.h>
+@@ -1357,6 +1358,7 @@ void Vulkan_wDx12::hk_vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
+ #endif
+ 
+     o_vkCmdEndRenderPass(cmdBuffer);
++    VkDeferredEvaluate::OnRenderPassEnded(cmdBuffer, o_vkCmdPipelineBarrier);
+ }
+ 
+ void Vulkan_wDx12::hk_vkCmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask)
+@@ -1506,6 +1508,7 @@ void Vulkan_wDx12::hk_vkCmdEndRenderPass2(VkCommandBuffer commandBuffer, const V
+ #endif
+ 
+     o_vkCmdEndRenderPass2(cmdBuffer, pSubpassEndInfo);
++    VkDeferredEvaluate::OnRenderPassEnded(cmdBuffer, o_vkCmdPipelineBarrier);
+ }
+ 
+ void Vulkan_wDx12::hk_vkCmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event,
+@@ -1775,6 +1778,7 @@ void Vulkan_wDx12::hk_vkCmdEndRendering(VkCommandBuffer commandBuffer)
+ #endif
+ 
+     o_vkCmdEndRendering(cmdBuffer);
++    VkDeferredEvaluate::OnRenderPassEnded(cmdBuffer, o_vkCmdPipelineBarrier);
+ }
+ 
+ void Vulkan_wDx12::hk_vkCmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
+@@ -2451,6 +2455,7 @@ void Vulkan_wDx12::hk_vkCmdEndRenderingKHR(VkCommandBuffer commandBuffer)
+ #endif
+ 
+     o_vkCmdEndRenderingKHR(cmdBuffer);
++    VkDeferredEvaluate::OnRenderPassEnded(cmdBuffer, o_vkCmdPipelineBarrier);
+ }
+ 
+ void Vulkan_wDx12::hk_vkCmdSetDeviceMaskKHR(VkCommandBuffer commandBuffer, uint32_t deviceMask)
+@@ -2600,6 +2605,7 @@ void Vulkan_wDx12::hk_vkCmdEndRenderPass2KHR(VkCommandBuffer commandBuffer, cons
+ #endif
+ 
+     o_vkCmdEndRenderPass2KHR(cmdBuffer, pSubpassEndInfo);
++    VkDeferredEvaluate::OnRenderPassEnded(cmdBuffer, o_vkCmdPipelineBarrier);
+ }
+ 
+ void Vulkan_wDx12::hk_vkCmdDrawIndirectCountKHR(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset,
+@@ -6110,6 +6116,7 @@ void Vulkan_wDx12::hk_vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32
+     }
+ 
+     o_vkCmdExecuteCommands(cmdBuffer, commandBufferCount, pCommandBuffers);
++    VkDeferredEvaluate::OnExecuteCommands(cmdBuffer, commandBufferCount, pCommandBuffers);
+ }
+ 
+ bool Vulkan_wDx12::RegisterVirtualCommandBuffer(VkCommandBuffer commandBuffer, VkCommandBuffer virtualCommandBuffer)
+@@ -6883,6 +6890,8 @@ VkResult Vulkan_wDx12::hk_vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
+     DiscardPendingInterop(commandBuffer);
+     cmdBufferStateTracker.OnBegin(commandBuffer, pBeginInfo);
+ 
++    VkDeferredEvaluate::OnBeginCommandBuffer(commandBuffer, pBeginInfo);
++
+ #ifdef LOG_ALL_RECORDS
+     LOG_DEBUG("commandBuffer: {:X}", (size_t) commandBuffer);
+ #endif
+@@ -6920,6 +6929,8 @@ VkResult Vulkan_wDx12::hk_vkResetCommandBuffer(VkCommandBuffer commandBuffer, Vk
+     DiscardPendingInterop(commandBuffer);
+     cmdBufferStateTracker.OnReset(commandBuffer);
+ 
++    VkDeferredEvaluate::Forget(commandBuffer);
++
+     return o_vkResetCommandBuffer(commandBuffer, flags);
+ }
+ 
+@@ -6937,6 +6948,9 @@ void Vulkan_wDx12::hk_vkFreeCommandBuffers(VkDevice device, VkCommandPool comman
+     // Notify state tracker before freeing
+     cmdBufferStateTracker.OnFreeCommandBuffers(commandPool, commandBufferCount, pCommandBuffers);
+ 
++    for (uint32_t i = 0; i < commandBufferCount; i++)
++        VkDeferredEvaluate::Forget(pCommandBuffers[i]);
++
+     // Call original function
+     o_vkFreeCommandBuffers(device, commandPool, commandBufferCount, pCommandBuffers);
+ }
+diff --git a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
+index 70c0f98..c02a9b0 100644
+--- a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
++++ b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
+@@ -6,6 +6,7 @@
+ #include "NVNGX_DLSS.h"
+ #include <framegen/nvngx/Nvngx_FG.h>
+ #include <inputs/FG/Upscaler_Inputs_Vk.h>
++#include <hooks/Vulkan_DeferredEvaluate.h>
+ #include "NVNGX_Parameter.h"
+ #include "proxies/NVNGX_Proxy.h"
+ 
+@@ -835,6 +836,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*
+         return Nvngx_FG::VULKAN_ReleaseFeature(InHandle);
+     }
+ 
++    VkDeferredEvaluate::ForgetFeature(handleId);
++
+     if (!shutdown)
+         LOG_INFO("releasing feature with id {0}", handleId);
+ 
+@@ -937,6 +940,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer
+         return Nvngx_FG::VULKAN_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
+     }
+ 
++    if (VkDeferredEvaluate::ContinuesRenderPass(InCmdList) &&
++        VkDeferredEvaluate::Defer(InCmdList, InFeatureHandle, InParameters))
++    {
++        return NVSDK_NGX_Result_Success;
++    }
++
+     evalCounter++;
+     if (Config::Instance()->SkipFirstFrames.has_value() && evalCounter < Config::Instance()->SkipFirstFrames.value())
+         return NVSDK_NGX_Result_Success;

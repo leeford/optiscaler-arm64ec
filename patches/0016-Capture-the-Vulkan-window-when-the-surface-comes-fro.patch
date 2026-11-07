@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 15:48:13 +0100
+Subject: [PATCH 16/18] Capture the Vulkan window when the surface comes from
+ vkGetInstanceProcAddr
+
+Under Wine the game gets vkCreateWin32SurfaceKHR past the detoured vulkan-1
+export, so the menu started with a null window and never received input.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/hooks/Vulkan_Hooks.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/OptiScaler/hooks/Vulkan_Hooks.cpp b/OptiScaler/hooks/Vulkan_Hooks.cpp
+index 27f2a4c..7545d3c 100644
+--- a/OptiScaler/hooks/Vulkan_Hooks.cpp
++++ b/OptiScaler/hooks/Vulkan_Hooks.cpp
+@@ -1399,6 +1399,14 @@ PFN_vkVoidFunction hkvkGetInstanceProcAddr(VkInstance instance, const char* pNam
+     {
+         return (PFN_vkVoidFunction) hkvkDestroyDevice;
+     }
++    else if (procName == std::string("vkCreateWin32SurfaceKHR"))
++    {
++        // Wine resolves this past the vulkan-1 export, the menu gets no window for its input without it
++        if (o_vkCreateWin32SurfaceKHR == nullptr)
++            o_vkCreateWin32SurfaceKHR = (PFN_vkCreateWin32SurfaceKHR) orgFunc;
++
++        return (PFN_vkVoidFunction) hkvkCreateWin32SurfaceKHR;
++    }
+ 
+     if (auto direct = StreamlineSwapchainFunction(pName, _ReturnAddress()))
+         return direct;

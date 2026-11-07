@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Thu, 5 Nov 2026 13:29:18 +0100
+Subject: [PATCH 02/18] Add GitHub Actions workflow for the ARM64EC build
+
+Build on pushes to master and on demand, and upload the full and core
+packages as artifacts. Pushing an arm64ec-* tag also publishes them as a
+release.
+
+Track arm64ec/libs because a clean runner cannot rebuild them: the FSR
+fork sources are not recorded anywhere in the repository. This matches
+how upstream tracks its x64 libraries in OptiScaler/library.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ arm64ec/.gitignore             | 6 +++++-
+ arm64ec/docs/proton-arm64ec.md | 4 ++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/arm64ec/.gitignore b/arm64ec/.gitignore
+index 18dfa2b..eae63aa 100644
+--- a/arm64ec/.gitignore
++++ b/arm64ec/.gitignore
+@@ -1,5 +1,9 @@
+ # Build artifacts (large) — the scripts and docs stay tracked.
+-/libs/
+ /Release/
+ /ReleaseDebug/
++/zip/
+ /*.zip
++
++# Prebuilt dependency libraries are tracked so CI can link without rebuilding
++# them (the root .gitignore excludes *.lib).
++!/libs/**
+diff --git a/arm64ec/docs/proton-arm64ec.md b/arm64ec/docs/proton-arm64ec.md
+index cce57e7..02b2fe2 100644
+--- a/arm64ec/docs/proton-arm64ec.md
++++ b/arm64ec/docs/proton-arm64ec.md
+@@ -84,3 +84,7 @@ Then build on Windows with Visual Studio 2022 and the ARM64EC tools:
+ ```
+ powershell -NoProfile -ExecutionPolicy Bypass -File arm64ec\build-optiscaler.ps1
+ ```
++
++`arm64ec/libs` holds prebuilt dependency libraries, so add `-SkipDeps` to reuse
++them. The `Build ARM64EC` GitHub Actions workflow does this on every push to
++`master`. Pushing an `arm64ec-*` tag also publishes a release.

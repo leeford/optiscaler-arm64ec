@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 05:15:24 +0100
+Subject: [PATCH 07/18] Run XeSS on DX12 under vkd3d-proton below SM 6.4
+
+vkd3d-proton reports SM 6.0 when the device lacks native 16-bit ops, which
+makes xessD3D12CreateContext fail with Unsupported Device. XeSS still runs
+there, so report SM 6.4 while its DX12 context is created.
+
+It costs about 125 ms per frame on Adreno 740, so auto now uses FSR 2.2
+instead of XeSS on such devices. XeSS stays available when selected.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler.ini                                 |  1 +
+ OptiScaler/hooks/D3D12_Hooks.cpp               | 14 ++++++++++++++
+ OptiScaler/hooks/D3D12_Hooks.h                 | 11 +++++++++++
+ OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp          | 13 +++++++++++++
+ OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp |  2 ++
+ arm64ec/README-ARM64EC.md                      | 10 ++++++----
+ 6 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/OptiScaler.ini b/OptiScaler.ini
+index 593fb90..bc988f9 100644
+--- a/OptiScaler.ini
++++ b/OptiScaler.ini
+@@ -9,6 +9,7 @@ Dx11Upscaler=auto
+ ; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
+ ; or the name of a folder in the 'custom' folder
+ ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
++; On vkd3d-proton below SM 6.4 (Adreno) auto uses fsr22 instead of XeSS, which is very slow there
+ Dx12Upscaler=auto
+ 
+ ; Select Upscaler for Vulkan games
+diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
+index 7afb667..84d426e 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.cpp
++++ b/OptiScaler/hooks/D3D12_Hooks.cpp
+@@ -70,6 +70,7 @@ static PFN_CreateUnorderedAccessView o_CreateUnorderedAccessView = nullptr;
+ static PFN_CreateRenderTargetView o_CreateRenderTargetView = nullptr;
+ static PFN_CheckFeatureSupport o_CheckFeatureSupport = nullptr;
+ static thread_local bool _hideMinPrecision16 = false;
++static thread_local bool _reportShaderModel64 = false;
+ static PFN_CreateCommittedResource o_CreateCommittedResource = nullptr;
+ static PFN_CreatePlacedResource o_CreatePlacedResource = nullptr;
+ static PFN_SetResidencyPriority o_SetResidencyPriority = nullptr;
+@@ -1267,6 +1268,7 @@ static void RestoreBindings(ID3D12GraphicsCommandList* cmdList, const RootBindin
+ }
+ 
+ void D3D12Hooks::SetHideMinPrecision16(bool enable) { _hideMinPrecision16 = enable; }
++void D3D12Hooks::SetReportShaderModel64(bool enable) { _reportShaderModel64 = enable; }
+ 
+ void D3D12Hooks::SetRootSignatureTracking(bool enable) { t_upscalerActive = !enable; }
+ 
+@@ -1825,6 +1827,18 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+ {
+     auto result = o_CheckFeatureSupport(device, Feature, pFeatureSupportData, FeatureSupportDataSize);
+ 
++    if (_reportShaderModel64 && SUCCEEDED(result) && Feature == D3D12_FEATURE_SHADER_MODEL &&
++        IdentifyGpu::getPrimaryGpu().d3d12IsVkd3dProton)
++    {
++        auto shaderModel = (D3D12_FEATURE_DATA_SHADER_MODEL*) pFeatureSupportData;
++
++        if (shaderModel->HighestShaderModel < D3D_SHADER_MODEL_6_4)
++        {
++            LOG_INFO("Reporting SM 6.4 instead of {:X}", (UINT) shaderModel->HighestShaderModel);
++            shaderModel->HighestShaderModel = D3D_SHADER_MODEL_6_4;
++        }
++    }
++
+     if (_hideMinPrecision16 && SUCCEEDED(result) && Feature == D3D12_FEATURE_D3D12_OPTIONS &&
+         IdentifyGpu::getPrimaryGpu().d3d12IsVkd3dProton)
+     {
+diff --git a/OptiScaler/hooks/D3D12_Hooks.h b/OptiScaler/hooks/D3D12_Hooks.h
+index b56d1b5..85b2297 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.h
++++ b/OptiScaler/hooks/D3D12_Hooks.h
+@@ -29,6 +29,17 @@ class D3D12Hooks
+     // the device lacks native 16-bit ops. Hides 16-bit precision from CheckFeatureSupport on the CALLING
+     // THREAD in that case, so FSR 2.x falls back to its FP32 shaders.
+     static void SetHideMinPrecision16(bool enable);
++
++    // vkd3d-proton reports SM 6.0 when the device lacks native 16-bit ops, but still runs the SM 6.4 shaders of
++    // XeSS. Reports SM 6.4 to CheckFeatureSupport on the CALLING THREAD in that case.
++    static void SetReportShaderModel64(bool enable);
++};
++
++class ScopedReportShaderModel64
++{
++  public:
++    ScopedReportShaderModel64() { D3D12Hooks::SetReportShaderModel64(true); }
++    ~ScopedReportShaderModel64() { D3D12Hooks::SetReportShaderModel64(false); }
+ };
+ 
+ class ScopedHideMinPrecision16
+diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
+index 975eb77..c58932d 100644
+--- a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
++++ b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
+@@ -567,7 +567,20 @@ static Upscaler GetUpscalerBackend()
+         upscaler = Upscaler::FFX;
+ 
+     if (Config::Instance()->Dx12Upscaler.has_value())
++    {
+         upscaler = Config::Instance()->Dx12Upscaler.value();
++    }
++    else if (upscaler == Upscaler::XeSS && primaryGpu.d3d12IsVkd3dProton && D3D12Device != nullptr)
++    {
++        // XeSS can run below SM 6.4 on vkd3d-proton, but such GPUs are too slow for it to be the default
++        D3D12_FEATURE_DATA_SHADER_MODEL shaderModel { D3D_SHADER_MODEL_6_4 };
++
++        if (FAILED(D3D12Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel))) ||
++            shaderModel.HighestShaderModel < D3D_SHADER_MODEL_6_4)
++        {
++            upscaler = Upscaler::FSR22;
++        }
++    }
+ 
+     return upscaler;
+ }
+diff --git a/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp b/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp
+index 6423fcc..46def2d 100644
+--- a/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp
++++ b/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp
+@@ -2,6 +2,7 @@
+ #include <Config.h>
+ 
+ #include "XeSSFeature_Dx12.h"
++#include <hooks/D3D12_Hooks.h>
+ 
+ bool XeSSFeatureDx12::InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
+ {
+@@ -10,6 +11,7 @@ bool XeSSFeatureDx12::InitInternal(ID3D12GraphicsCommandList* InCommandList, NVS
+     if (IsInited())
+         return true;
+ 
++    ScopedReportShaderModel64 reportShaderModel64 {};
+     return InitXeSS(Device, InParameters);
+ }
+ 
+diff --git a/arm64ec/README-ARM64EC.md b/arm64ec/README-ARM64EC.md
+index f8c6f1b..d4cf1f4 100644
+--- a/arm64ec/README-ARM64EC.md
++++ b/arm64ec/README-ARM64EC.md
+@@ -58,10 +58,12 @@ the driver lacks:
+ 
+ - **FSR 2.2.1 and FSR 3.1.2** are compiled natively into the ARM64EC proxy and
+   are the realistic outputs on Adreno/Mali class hardware.
+-- **XeSS**, **DLSS** and **FSR4** depend on vendor runtimes/GPUs. On Adreno,
+-  DLSS is generally not detected, FSR4 is unavailable, and XeSS/FSR2.1.2 may
+-  fail to initialise. See the upstream compatibility lists.
+-- **Frame generation** is not known to work on Adreno in public reports.
++- **DLSS** and **FSR4** depend on vendor runtimes/GPUs. On Adreno, DLSS is
++  generally not detected and FSR4 is unavailable.
++- **XeSS** runs on DX12 on Adreno 740 with `Dx12Upscaler=xess`, but at about
++  7 fps, so `auto` doesn't pick it there. XeSS on DX11 doesn't work: `xess` is
++  Intel only, and `xess_12` needs D3D11 to D3D12 texture sharing, which fails
++  with DXVK 2.3.1 and vkd3d-proton 3.0.1.
+ - The x64 vendor DLLs in `OptiScaler/` (XeSS, AMD FidelityFX, D3D12Core) load,
+   but all their work runs under x64 emulation. Do not mix in pure ARM64 copies:
+   an ARM64EC process cannot load pure ARM64 modules.

@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 10:11:35 +0100
+Subject: [PATCH 10/18] Fix FidelityFX Vulkan context creation on unified
+ memory GPUs
+
+FidelityFX refuses host visible memory when it asks for device local
+memory. On Adreno every usable device local type is host visible, so
+FSR failed with a backend error before its first allocation.
+
+While a FidelityFX Vulkan context is created, report one such type as
+device local only, as long as another type can still serve uploads.
+The memory properties hook is now always attached for this, and the
+VRAM spoofing in it stays behind its config option.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/spoofing/Vulkan_Spoofing.cpp       | 64 +++++++++++++++++--
+ OptiScaler/spoofing/Vulkan_Spoofing.h         | 15 +++++
+ OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp    |  2 +
+ OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp  |  2 +
+ .../upscalers/fsr2_212/FSR2Feature_Vk_212.cpp |  2 +
+ 5 files changed, 78 insertions(+), 7 deletions(-)
+
+diff --git a/OptiScaler/spoofing/Vulkan_Spoofing.cpp b/OptiScaler/spoofing/Vulkan_Spoofing.cpp
+index 5917f04..9fccbbf 100644
+--- a/OptiScaler/spoofing/Vulkan_Spoofing.cpp
++++ b/OptiScaler/spoofing/Vulkan_Spoofing.cpp
+@@ -176,6 +176,46 @@ static void EnableFeatureStruct(VkDeviceCreateInfo* pCreateInfo, PFN_vkGetPhysic
+     (EnableSupportedFeature(pCreateInfo, modifiedFeatures, feature, members, supported.*members), ...);
+ }
+ 
++// FidelityFX refuses host visible memory when it asks for device local memory, which leaves it with nothing on a
++// unified memory GPU like Adreno, where every usable device local type is host visible. Show it one such type as device
++// local only, as long as another type can still serve its upload buffers.
++static void HideHostAccessOnOneMemoryType(VkPhysicalDeviceMemoryProperties* memoryProperties)
++{
++    constexpr VkMemoryPropertyFlags hostFlags =
++        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++    constexpr VkMemoryPropertyFlags uploadFlags =
++        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++
++    int candidate = -1;
++
++    for (uint32_t i = 0; i < memoryProperties->memoryTypeCount; i++)
++    {
++        const auto flags = memoryProperties->memoryTypes[i].propertyFlags;
++
++        if ((flags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0 ||
++            (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0)
++            continue;
++
++        if ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
++            return; // A real device local type exists
++
++        candidate = static_cast<int>(i);
++    }
++
++    if (candidate < 0)
++        return;
++
++    for (uint32_t i = 0; i < memoryProperties->memoryTypeCount; i++)
++    {
++        if (static_cast<int>(i) != candidate &&
++            (memoryProperties->memoryTypes[i].propertyFlags & uploadFlags) == uploadFlags)
++        {
++            memoryProperties->memoryTypes[candidate].propertyFlags &= ~hostFlags;
++            return;
++        }
++    }
++}
++
+ inline static void hkvkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
+                                                          VkPhysicalDeviceMemoryProperties* pMemoryProperties)
+ {
+@@ -184,6 +224,12 @@ inline static void hkvkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physic
+     if (pMemoryProperties == nullptr)
+         return;
+ 
++    if (ScopedFfxMemoryTypes::IsActive())
++        HideHostAccessOnOneMemoryType(pMemoryProperties);
++
++    if (!Config::Instance()->VulkanVRAM.has_value())
++        return;
++
+     for (size_t i = 0; i < pMemoryProperties->memoryHeapCount; i++)
+     {
+         if (pMemoryProperties->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+@@ -1674,23 +1720,27 @@ void VulkanSpoofing::HookForVulkanExtensionSpoofing(HMODULE vulkanModule)
+ 
+ void VulkanSpoofing::HookForVulkanVRAMSpoofing(HMODULE vulkanModule)
+ {
+-    if (Config::Instance()->VulkanVRAM.has_value() && o_vkGetPhysicalDeviceMemoryProperties == nullptr)
++    if (o_vkGetPhysicalDeviceMemoryProperties == nullptr)
+     {
+         FARPROC address = nullptr;
+ 
++        // Always hooked because FidelityFX needs it on unified memory GPUs, see HideHostAccessOnOneMemoryType
+         address = KernelBaseProxy::GetProcAddress_()(vulkanModule, "vkGetPhysicalDeviceMemoryProperties");
+         o_vkGetPhysicalDeviceMemoryProperties = (PFN_vkGetPhysicalDeviceMemoryProperties) address;
+ 
+-        address = KernelBaseProxy::GetProcAddress_()(vulkanModule, "vkGetPhysicalDeviceMemoryProperties2");
+-        o_vkGetPhysicalDeviceMemoryProperties2 = (PFN_vkGetPhysicalDeviceMemoryProperties2) address;
++        if (Config::Instance()->VulkanVRAM.has_value())
++        {
++            address = KernelBaseProxy::GetProcAddress_()(vulkanModule, "vkGetPhysicalDeviceMemoryProperties2");
++            o_vkGetPhysicalDeviceMemoryProperties2 = (PFN_vkGetPhysicalDeviceMemoryProperties2) address;
+ 
+-        address = KernelBaseProxy::GetProcAddress_()(vulkanModule, "vkGetPhysicalDeviceMemoryProperties2KHR");
+-        o_vkGetPhysicalDeviceMemoryProperties2KHR = (PFN_vkGetPhysicalDeviceMemoryProperties2KHR) address;
++            address = KernelBaseProxy::GetProcAddress_()(vulkanModule, "vkGetPhysicalDeviceMemoryProperties2KHR");
++            o_vkGetPhysicalDeviceMemoryProperties2KHR = (PFN_vkGetPhysicalDeviceMemoryProperties2KHR) address;
++        }
+ 
+         if (o_vkGetPhysicalDeviceMemoryProperties != nullptr || o_vkGetPhysicalDeviceMemoryProperties2 != nullptr ||
+             o_vkGetPhysicalDeviceMemoryProperties2KHR != nullptr)
+         {
+-            LOG_INFO("Attaching Vulkan VRAM spoofing hooks");
++            LOG_INFO("Attaching Vulkan memory properties hooks");
+ 
+             DetourTransactionBegin();
+             DetourUpdateThread(GetCurrentThread());
+@@ -1708,7 +1758,7 @@ void VulkanSpoofing::HookForVulkanVRAMSpoofing(HMODULE vulkanModule)
+             auto detourResult = DetourTransactionCommit();
+             if (detourResult != NO_ERROR)
+             {
+-                LOG_ERROR("Failed to attach Vulkan VRAM spoofing hooks: {:X}", detourResult);
++                LOG_ERROR("Failed to attach Vulkan memory properties hooks: {:X}", detourResult);
+                 o_vkGetPhysicalDeviceMemoryProperties = nullptr;
+                 o_vkGetPhysicalDeviceMemoryProperties2 = nullptr;
+                 o_vkGetPhysicalDeviceMemoryProperties2KHR = nullptr;
+diff --git a/OptiScaler/spoofing/Vulkan_Spoofing.h b/OptiScaler/spoofing/Vulkan_Spoofing.h
+index 53d91cc..58672ae 100644
+--- a/OptiScaler/spoofing/Vulkan_Spoofing.h
++++ b/OptiScaler/spoofing/Vulkan_Spoofing.h
+@@ -28,6 +28,21 @@ class VulkanDeviceFeatureState
+     friend class VulkanSpoofing;
+ };
+ 
++// Active while the FidelityFX Vulkan backends create their resources, on the calling thread only
++class ScopedFfxMemoryTypes
++{
++  public:
++    ScopedFfxMemoryTypes() { depth++; }
++    ~ScopedFfxMemoryTypes() { depth--; }
++    ScopedFfxMemoryTypes(const ScopedFfxMemoryTypes&) = delete;
++    ScopedFfxMemoryTypes& operator=(const ScopedFfxMemoryTypes&) = delete;
++
++    static bool IsActive() { return depth > 0; }
++
++  private:
++    inline static thread_local int depth = 0;
++};
++
+ class VulkanSpoofing
+ {
+   private:
+diff --git a/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp b/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
+index 2d077f7..16f65d6 100644
+--- a/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
++++ b/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
+@@ -1,4 +1,5 @@
+ #include <pch.h>
++#include <spoofing/Vulkan_Spoofing.h>
+ #include <Config.h>
+ #include <Util.h>
+ #include <proxies/FfxApi_Proxy.h>
+@@ -177,6 +178,7 @@ bool FFXFeatureVk::InitFFX(const NVSDK_NGX_Parameter* InParameters)
+ 
+     {
+         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
++        ScopedFfxMemoryTypes ffxMemoryTypes {};
+ 
+         ffxCreateBackendVKDesc backendDesc = { 0 };
+         backendDesc.vkDevice = Device;
+diff --git a/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp b/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
+index ac04967..f82dff3 100644
+--- a/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
++++ b/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
+@@ -1,4 +1,5 @@
+ #include <pch.h>
++#include <spoofing/Vulkan_Spoofing.h>
+ #include <Config.h>
+ #include "FSR2Feature_Vk.h"
+ #include "nvsdk_ngx_vk.h"
+@@ -21,6 +22,7 @@ bool FSR2FeatureVk::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+ 
+     {
+         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
++        ScopedFfxMemoryTypes ffxMemoryTypes {};
+ 
+         auto scratchBufferSize = ffxFsr2GetScratchMemorySizeVK(PhysicalDevice);
+         void* scratchBuffer = calloc(scratchBufferSize, 1);
+diff --git a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
+index 8b5831b..130256d 100644
+--- a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
++++ b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
+@@ -1,4 +1,5 @@
+ #include <pch.h>
++#include <spoofing/Vulkan_Spoofing.h>
+ #include <Config.h>
+ #include "FSR2Feature_Vk_212.h"
+ #include "nvsdk_ngx_vk.h"
+@@ -21,6 +22,7 @@ bool FSR2FeatureVk212::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+ 
+     {
+         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
++        ScopedFfxMemoryTypes ffxMemoryTypes {};
+ 
+         auto scratchBufferSize = Fsr212::ffxFsr2GetScratchMemorySizeVK212(PhysicalDevice);
+         void* scratchBuffer = calloc(scratchBufferSize, 1);

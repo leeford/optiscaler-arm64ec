@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Thu, 5 Nov 2026 22:07:10 +0100
+Subject: [PATCH 06/18] Apply clang-format to the SGSR 2 and D3D12 hook changes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/hooks/D3D12_Hooks.cpp                 |  5 +++--
+ OptiScaler/menu/menu_common.cpp                  |  9 +++++----
+ OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp    |  6 +++---
+ OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp |  3 +--
+ OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp  | 13 +++++--------
+ 5 files changed, 17 insertions(+), 19 deletions(-)
+
+diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
+index f4e07ad..7afb667 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.cpp
++++ b/OptiScaler/hooks/D3D12_Hooks.cpp
+@@ -1834,8 +1834,9 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+             !options4.Native16BitShaderOpsSupported)
+         {
+             auto options = (D3D12_FEATURE_DATA_D3D12_OPTIONS*) pFeatureSupportData;
+-            options->MinPrecisionSupport = (D3D12_SHADER_MIN_PRECISION_SUPPORT) (options->MinPrecisionSupport &
+-                                                                                 ~D3D12_SHADER_MIN_PRECISION_SUPPORT_16_BIT);
++            options->MinPrecisionSupport =
++                (D3D12_SHADER_MIN_PRECISION_SUPPORT) (options->MinPrecisionSupport &
++                                                      ~D3D12_SHADER_MIN_PRECISION_SUPPORT_16_BIT);
+             LOG_DEBUG("Hiding 16-bit min precision, native 16-bit ops are not supported");
+         }
+     }
+diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
+index 9480d40..1477e39 100644
+--- a/OptiScaler/menu/menu_common.cpp
++++ b/OptiScaler/menu/menu_common.cpp
+@@ -1296,9 +1296,9 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
+ 
+ void MenuCommon::AddDx12Backends(Upscaler upscaler)
+ {
+-    RenderUpscalerCombo(API::DX12, upscaler,
+-                        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::SGSR2,
+-                          Upscaler::DLSS });
++    RenderUpscalerCombo(
++        API::DX12, upscaler,
++        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::SGSR2, Upscaler::DLSS });
+ }
+ 
+ void MenuCommon::AddVulkanBackends(Upscaler upscaler)
+@@ -7119,7 +7119,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+         // xess or dlss version >= 2.5.1
+         constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
+         const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;
+-        rcasEnabled = currentBackend == Upscaler::XeSS || currentBackend == Upscaler::SGSR2 || (isDlss && currentFeature->Version() >= requiredDlssVersion);
++        rcasEnabled = currentBackend == Upscaler::XeSS || currentBackend == Upscaler::SGSR2 ||
++                      (isDlss && currentFeature->Version() >= requiredDlssVersion);
+ 
+         // Determine current mode for the dropdown
+         bool currentRcasEnabled = config->RcasEnabled.value_or(rcasEnabled);
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
+index c94c7d3..25e186b 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
+@@ -43,9 +43,9 @@ SGSR2Constants SGSR2ConstantBuilder::Build(NVSDK_NGX_Parameter* InParameters, co
+     }
+     else if (cfg.FsrHorizontalFov.value_or_default() > 0.0f)
+     {
+-        verticalFov = GetVerticalFovFromHorizontal(GetRadiansFromDeg(cfg.FsrHorizontalFov.value()),
+-                                                   static_cast<float>(frame.targetWidth),
+-                                                   static_cast<float>(frame.targetHeight));
++        verticalFov =
++            GetVerticalFovFromHorizontal(GetRadiansFromDeg(cfg.FsrHorizontalFov.value()),
++                                         static_cast<float>(frame.targetWidth), static_cast<float>(frame.targetHeight));
+     }
+ 
+     const float renderW = static_cast<float>(frame.renderWidth);
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
+index e10a813..7836957 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx11.cpp
+@@ -325,8 +325,7 @@ bool SGSR2FeatureDx11::EvaluateInternal(ID3D11DeviceContext* InContext, NVSDK_NG
+     auto hr = Device->CreateUnorderedAccessView(outputTexture.Get(), &outputUavDesc, &outputUav);
+     if (FAILED(hr))
+     {
+-        LOG_ERROR("Output format {} error: {:x}", static_cast<int>(outputDesc.Format),
+-                  static_cast<unsigned long>(hr));
++        LOG_ERROR("Output format {} error: {:x}", static_cast<int>(outputDesc.Format), static_cast<unsigned long>(hr));
+         return false;
+     }
+ 
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
+index 0216670..9b9c79e 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
+@@ -57,9 +57,9 @@ SGSR2Passes_Dx12::SGSR2Passes_Dx12(std::string InName, ID3D12Device* InDevice) :
+ 
+     for (auto& frameConstants : _frameConstants)
+     {
+-        const auto hr =
+-            InDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+-                                              D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&frameConstants));
++        const auto hr = InDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
++                                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
++                                                          IID_PPV_ARGS(&frameConstants));
+ 
+         if (FAILED(hr))
+         {
+@@ -159,7 +159,6 @@ bool SGSR2Passes_Dx12::Dispatch(ID3D12GraphicsCommandList* InCmdList, const Inpu
+         return false;
+     }
+ 
+-
+     {
+         ID3D12DescriptorHeap* heaps[] = { convertHeap.GetHeapCSU() };
+         InCmdList->SetDescriptorHeaps(_countof(heaps), heaps);
+@@ -191,10 +190,8 @@ bool SGSR2Passes_Dx12::Dispatch(ID3D12GraphicsCommandList* InCmdList, const Inpu
+ 
+     {
+         const D3D12_RESOURCE_BARRIER toWrite[] = {
+-            Transition(_motionDepthClip, ReadState, WriteState),
+-            Transition(_colorLuma, ReadState, WriteState),
+-            Transition(prevHistory, ReadState, WriteState),
+-            CD3DX12_RESOURCE_BARRIER::UAV(inputs.output),
++            Transition(_motionDepthClip, ReadState, WriteState), Transition(_colorLuma, ReadState, WriteState),
++            Transition(prevHistory, ReadState, WriteState),      CD3DX12_RESOURCE_BARRIER::UAV(inputs.output),
+             CD3DX12_RESOURCE_BARRIER::UAV(nextHistory),
+         };
+         InCmdList->ResourceBarrier(_countof(toWrite), toWrite);

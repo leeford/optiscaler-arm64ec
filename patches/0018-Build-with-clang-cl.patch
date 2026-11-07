@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: optiscaler-arm64ec <optiscaler-arm64ec@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 19:20:15 +0000
+Subject: [PATCH 18/18] Build with clang-cl
+
+clang rejects three constructs MSVC accepts: a default member initializer
+used by a brace-initialised array inside the enclosing class, a
+reinterpret_cast in a constexpr initializer, and an ambiguous '= {}'
+assignment to feature_version. Rewrite them in forms both accept.
+---
+ OptiScaler/framegen/ffx/FSRFG_Dx12.cpp  | 2 +-
+ OptiScaler/hooks/Kernel_Hooks.h         | 2 +-
+ OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp b/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
+index b47916d..f07af33 100644
+--- a/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
++++ b/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
+@@ -1087,7 +1087,7 @@ void FSRFG_Dx12::DestroyFGContext()
+     _frameCount = 1;
+     UpdateTarget();
+     // _lastDispatchedFrame = 0;
+-    _version = {};
++    _version = feature_version {};
+ 
+     LOG_DEBUG("");
+ 
+diff --git a/OptiScaler/hooks/Kernel_Hooks.h b/OptiScaler/hooks/Kernel_Hooks.h
+index 40154c5..393fa38 100644
+--- a/OptiScaler/hooks/Kernel_Hooks.h
++++ b/OptiScaler/hooks/Kernel_Hooks.h
+@@ -67,7 +67,7 @@ class KernelHooks
+     static inline std::mutex hookMutexBase;
+ 
+   public:
+-    static constexpr HMODULE amdxc64Mark = HMODULE(0xFFFFFFFF13372137);
++    inline static const HMODULE amdxc64Mark = HMODULE(0xFFFFFFFF13372137);
+ 
+     static void Hook()
+     {
+diff --git a/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h b/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
+index f618db8..d951392 100644
+--- a/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
++++ b/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
+@@ -14,7 +14,7 @@ class XeFGInputs
+     {
+         const char* name;
+         PVOID function;
+-        PVOID target = nullptr;
++        PVOID target; // nullptr when left out of the brace initializer
+     };
+ 
+     // XeFG output: the game's own XeFG and XeLL run on OptiScaler's libraries, as they would without OptiScaler.

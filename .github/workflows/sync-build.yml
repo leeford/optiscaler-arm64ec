@@ -1,0 +1,132 @@
+name: Sync mainline and build ARM64EC
+
+# Daily: take optiscaler/OptiScaler master, apply patches/, build ARM64EC on
+# Linux (clang-cl + xwin), publish a release the Armada Decky plugin installs.
+# A patch that no longer applies opens (or updates) an "upstream-conflict" issue.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"        # 03:17 UTC daily
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "optiscaler/OptiScaler branch, tag or commit"
+        default: master
+      force:
+        description: "Build and release even if nothing changed"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["patches/**", "cmake/**", "scripts/**", "prebuilt/**", "docs/PACKAGE-README.md", ".github/workflows/sync-build.yml"]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-build
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/optiscaler/OptiScaler
+  UPSTREAM_REF: ${{ inputs.upstream_ref || 'master' }}
+  CONFLICT_LABEL: upstream-conflict
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide whether to build
+        id: decide
+        run: |
+          upstream=$(git ls-remote "$UPSTREAM_URL" "$UPSTREAM_REF" | cut -f1 | head -1)
+          [ -n "$upstream" ] || upstream=$UPSTREAM_REF   # a raw commit id
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          rev=$(git rev-parse --short=7 HEAD)
+          last=$(gh release view --json body -q .body 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = schedule ] && grep -q "$upstream" <<<"$last" && grep -q "Build repo revision:\*\* $rev" <<<"$last"; then
+            echo "Latest release already has upstream $upstream and repo $rev; nothing to do."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ inputs.force }}" != true ] && grep -q "$upstream" <<<"$last" && grep -q "Build repo revision:\*\* $rev" <<<"$last"; then
+            echo "Nothing changed (use force to rebuild)."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache toolchain
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
+
+      - name: Set up toolchain
+        if: steps.decide.outputs.build == 'true'
+        run: scripts/setup-toolchain.sh
+
+      - name: Apply patches to mainline
+        id: prepare
+        if: steps.decide.outputs.build == 'true'
+        run: scripts/prepare-source.sh "$PWD/src" "${{ steps.decide.outputs.upstream }}"
+
+      - name: Report conflict
+        if: failure() && steps.prepare.outcome == 'failure' && hashFiles('src.conflicts.md') != ''
+        run: |
+          gh label create "$CONFLICT_LABEL" --color B60205 --description "Patch series no longer applies to mainline" --force
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            cat src.conflicts.md
+            echo
+            echo "Workflow run: $run_url"
+            echo
+            echo "To fix: run \`scripts/refresh-patches.sh\` locally, resolve, commit the updated \`patches/\`."
+          } > issue.md
+          open=$(gh issue list --label "$CONFLICT_LABEL" --state open --json number -q '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body-file issue.md
+          else
+            gh issue create --label "$CONFLICT_LABEL" \
+              --title "Patch series conflicts with mainline ${{ steps.decide.outputs.upstream }}" --body-file issue.md
+          fi
+
+      - name: Build
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          source .tools/env.sh
+          scripts/build.sh "$PWD/src" "$PWD/out"
+
+      - name: Package
+        id: package
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          scripts/package.sh "$PWD/src" "$PWD/out/build/OptiScaler.dll" "$PWD/dist"
+          echo "zip=$(ls dist/OptiScaler-arm64ec-*.zip)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.decide.outputs.build == 'true'
+        with:
+          name: optiscaler-arm64ec
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish release
+        if: steps.decide.outputs.build == 'true' && github.event_name != 'push'
+        run: |
+          zip=${{ steps.package.outputs.zip }}
+          short=$(basename "$zip" .zip); short=${short##*-}
+          tag="arm64ec-$(date -u +%Y%m%d)-$short-$(git rev-parse --short=7 HEAD)"
+          gh release create "$tag" "$zip" --target "$GITHUB_SHA" --latest \
+            --title "OptiScaler ARM64EC $(date -u +%Y-%m-%d) ($short)" --notes-file dist/release-notes.md
+
+      - name: Close resolved conflict issues
+        if: success() && steps.decide.outputs.build == 'true'
+        run: |
+          for n in $(gh issue list --label "$CONFLICT_LABEL" --state open --json number -q '.[].number'); do
+            gh issue close "$n" --comment "Patches apply and build again on upstream ${{ steps.decide.outputs.upstream }}."
+          done

@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 05:49:52 +0100
+Subject: [PATCH 09/18] Limit the XeSS shader model report to DX12 games
+
+xess_12 wraps the DX12 XeSS feature, so DX11 games got past context creation
+too and then stalled on every frame, as sharing their textures with D3D12
+fails with DXVK 2.3.1 and vkd3d-proton 3.0.1. They now fail at init and fall
+back like before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ OptiScaler/hooks/D3D12_Hooks.cpp | 2 +-
+ OptiScaler/hooks/D3D12_Hooks.h   | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
+index 84d426e..bf10807 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.cpp
++++ b/OptiScaler/hooks/D3D12_Hooks.cpp
+@@ -1828,7 +1828,7 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+     auto result = o_CheckFeatureSupport(device, Feature, pFeatureSupportData, FeatureSupportDataSize);
+ 
+     if (_reportShaderModel64 && SUCCEEDED(result) && Feature == D3D12_FEATURE_SHADER_MODEL &&
+-        IdentifyGpu::getPrimaryGpu().d3d12IsVkd3dProton)
++        IdentifyGpu::gameUsesVkd3dProton())
+     {
+         auto shaderModel = (D3D12_FEATURE_DATA_SHADER_MODEL*) pFeatureSupportData;
+ 
+diff --git a/OptiScaler/hooks/D3D12_Hooks.h b/OptiScaler/hooks/D3D12_Hooks.h
+index 85b2297..ba92241 100644
+--- a/OptiScaler/hooks/D3D12_Hooks.h
++++ b/OptiScaler/hooks/D3D12_Hooks.h
+@@ -31,7 +31,8 @@ class D3D12Hooks
+     static void SetHideMinPrecision16(bool enable);
+ 
+     // vkd3d-proton reports SM 6.0 when the device lacks native 16-bit ops, but still runs the SM 6.4 shaders of
+-    // XeSS. Reports SM 6.4 to CheckFeatureSupport on the CALLING THREAD in that case.
++    // XeSS. Reports SM 6.4 to CheckFeatureSupport on the CALLING THREAD in that case, for DX12 games only:
++    // DX11 games would then fail on every frame, as they can't share their textures with D3D12 there.
+     static void SetReportShaderModel64(bool enable);
+ };
+ 

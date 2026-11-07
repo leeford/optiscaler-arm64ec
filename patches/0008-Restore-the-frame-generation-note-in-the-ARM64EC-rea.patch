@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nydal91 <nydal91@hotmail.com>
+Date: Fri, 6 Nov 2026 05:15:48 +0100
+Subject: [PATCH 08/18] Restore the frame generation note in the ARM64EC readme
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
+---
+ arm64ec/README-ARM64EC.md | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arm64ec/README-ARM64EC.md b/arm64ec/README-ARM64EC.md
+index d4cf1f4..3454019 100644
+--- a/arm64ec/README-ARM64EC.md
++++ b/arm64ec/README-ARM64EC.md
+@@ -64,6 +64,7 @@ the driver lacks:
+   7 fps, so `auto` doesn't pick it there. XeSS on DX11 doesn't work: `xess` is
+   Intel only, and `xess_12` needs D3D11 to D3D12 texture sharing, which fails
+   with DXVK 2.3.1 and vkd3d-proton 3.0.1.
++- **Frame generation** is not known to work on Adreno in public reports.
+ - The x64 vendor DLLs in `OptiScaler/` (XeSS, AMD FidelityFX, D3D12Core) load,
+   but all their work runs under x64 emulation. Do not mix in pure ARM64 copies:
+   an ARM64EC process cannot load pure ARM64 modules.
