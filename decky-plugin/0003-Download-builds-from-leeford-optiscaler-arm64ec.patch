@@ -1,0 +1,22 @@
+From 2603ac1d30459c9ab958e3fe7d1b95e81bf1d013 Mon Sep 17 00:00:00 2001
+From: optiscaler-arm64ec <optiscaler-arm64ec@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 19:57:39 +0000
+Subject: [PATCH 3/3] Download builds from leeford/optiscaler-arm64ec
+
+---
+ py_modules/opti_release.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/py_modules/opti_release.py b/py_modules/opti_release.py
+index a99e910..65a5592 100644
+--- a/py_modules/opti_release.py
++++ b/py_modules/opti_release.py
+@@ -23,7 +23,7 @@ log = logging.getLogger("optiscaler.release")
+ # Where builds come from. Without editing the plugin, either can be changed in
+ # <plugin data dir>/source.json, e.g. to pin an older build or go back to
+ # Sloptiscaler:  {"repo": "justradical/Sloptiscaler", "tag": "finally"}
+-DEFAULT_REPO = "YOUR_GITHUB_USER/optiscaler-arm64ec"
++DEFAULT_REPO = "leeford/optiscaler-arm64ec"
+ 
+ 
+ def _source_override() -> dict:

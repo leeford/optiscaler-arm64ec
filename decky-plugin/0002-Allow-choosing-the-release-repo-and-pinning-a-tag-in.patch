@@ -1,0 +1,68 @@
+From 10855c84013bbc3fabe943953cbdd3a7b9f88044 Mon Sep 17 00:00:00 2001
+From: optiscaler-arm64ec <optiscaler-arm64ec@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 19:27:29 +0000
+Subject: [PATCH 2/3] Allow choosing the release repo and pinning a tag in
+ source.json
+
+<plugin data dir>/source.json can set {"repo": ..., "tag": ...}, so a
+build can be rolled back or switched without editing the plugin.
+---
+ py_modules/opti_release.py | 37 ++++++++++++++++++++++++++++++++-----
+ 1 file changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/py_modules/opti_release.py b/py_modules/opti_release.py
+index ab75034..a99e910 100644
+--- a/py_modules/opti_release.py
++++ b/py_modules/opti_release.py
+@@ -20,9 +20,25 @@ log = logging.getLogger("optiscaler.release")
+ 
+ # Tags here are not version numbers and an asset can be replaced in place, so
+ # the cache is keyed on the asset's sha256.
+-# Where builds come from. OPTISCALER_RELEASE_REPO overrides it without editing
+-# the plugin, e.g. to go back to "justradical/Sloptiscaler".
+-REPO = os.environ.get("OPTISCALER_RELEASE_REPO") or "YOUR_GITHUB_USER/optiscaler-arm64ec"
++# Where builds come from. Without editing the plugin, either can be changed in
++# <plugin data dir>/source.json, e.g. to pin an older build or go back to
++# Sloptiscaler:  {"repo": "justradical/Sloptiscaler", "tag": "finally"}
++DEFAULT_REPO = "YOUR_GITHUB_USER/optiscaler-arm64ec"
++
++
++def _source_override() -> dict:
++    try:
++        with open(paths.runtime_dir() / "source.json", "r", encoding="utf-8") as handle:
++            data = json.load(handle)
++        return data if isinstance(data, dict) else {}
++    except (OSError, ValueError):
++        return {}
++
++
++_SOURCE = _source_override()
++REPO = os.environ.get("OPTISCALER_RELEASE_REPO") or str(_SOURCE.get("repo") or DEFAULT_REPO)
++# A pinned release tag; empty means "newest release".
++PINNED_TAG = str(_SOURCE.get("tag") or "")
+ RELEASE_URL = f"https://github.com/{REPO}/releases/latest"
+ API_ROOT = "https://api.github.com"
+ USER_AGENT = f"OptiScaler-decky/1.0 (+https://github.com/{REPO})"
+@@ -196,9 +212,20 @@ def _normalise(release: dict, asset: dict) -> dict:
+     }
+ 
+ 
+-# Whatever the newest release happens to hold. No tag is pinned, because the
+-# tags carry no version meaning and the next build may land under a new one.
++# Whatever the newest release happens to hold, unless source.json pins a tag.
+ def remote_release(timeout: float = 20.0) -> dict:
++    if PINNED_TAG:
++        try:
++            release = _api_get(f"{API_ROOT}/repos/{REPO}/releases/tags/{PINNED_TAG}", timeout)
++        except urllib.error.HTTPError as exc:
++            raise ReleaseError(f"Pinned release {PINNED_TAG} not found in {REPO} (HTTP {exc.code})") from exc
++        except urllib.error.URLError as exc:
++            raise ReleaseError(f"Could not reach GitHub: {_reason(exc)}") from exc
++        asset = _pick_asset(release)
++        if not asset:
++            raise ReleaseError(f"Pinned release {PINNED_TAG} has no ARM64EC zip")
++        return _normalise(release, asset)
++
+     try:
+         release = _api_get(f"{API_ROOT}/repos/{REPO}/releases/latest", timeout)
+         asset = _pick_asset(release)
