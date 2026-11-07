@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lee Ford <472320+leeford@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:06:36 +0000
+Subject: [PATCH] Skip the gdi32 D3DKMTQueryAdapterInfo hook on ARM64EC
+
+clang-cl compiles hkD3DKMTQueryAdapterInfo to a single BRK #1 for
+ARM64EC, so the first call through the detour raises an illegal
+instruction. OptiScaler's own GetDriverStore (from checkGpuInfo) makes
+that call as DXVK starts, which crashes every D3D11 game on launch.
+
+The hook only spoofs HAGS and the AMD FSR 4 GPU check, which do not
+apply on Adreno, so leave gdi32 unhooked on ARM64EC until the codegen
+problem is understood.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ OptiScaler/hooks/Gdi32_Hooks.h | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/OptiScaler/hooks/Gdi32_Hooks.h b/OptiScaler/hooks/Gdi32_Hooks.h
+index a6d0a02..d8bf493 100644
+--- a/OptiScaler/hooks/Gdi32_Hooks.h
++++ b/OptiScaler/hooks/Gdi32_Hooks.h
+@@ -106,6 +106,15 @@ static void hookGdi32()
+ {
+     LOG_FUNC();
+ 
++#if defined(_M_ARM64EC)
++    // clang-cl compiles hkD3DKMTQueryAdapterInfo to a lone trap (BRK #1) for
++    // ARM64EC, so the first D3DKMTQueryAdapterInfo call (DXVK, or our own
++    // GetDriverStore) kills the game. The hook only spoofs HAGS and the AMD
++    // FSR 4 GPU check, neither of which applies on Adreno.
++    LOG_INFO("Skipping D3DKMTQueryAdapterInfo hook on ARM64EC");
++    return;
++#endif
++
+     o_D3DKMTQueryAdapterInfo =
+         reinterpret_cast<PFN_D3DKMTQueryAdapterInfo>(DetourFindFunction("gdi32.dll", "D3DKMTQueryAdapterInfo"));
+ 

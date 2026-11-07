@@ -45,6 +45,11 @@ plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.0
 - Detours and FreeType 2.13.3 are built from source; FidelityFX FSR 2/3 static libs
   are still prebuilt (`prebuilt/fsr-arm64ec`, see PROVENANCE.md).
 - Full package is ~180 MB because of the x64 XeSS/FidelityFX runtimes.
+- `0019` skips `hookGdi32()` on ARM64EC: clang-cl compiled `hkD3DKMTQueryAdapterInfo`
+  to a lone `BRK #1`, so D3D11 games died at launch (illegal instruction at
+  `dxgi.dll+0x8312C` in the d94fb15 build). Root cause in clang not yet found; mainline
+  added the hook on 2026-10-05, after Sloptiscaler's base, which is why that build is fine.
+- CI scripts run under `set -o pipefail`: never pipe into `grep -q` (broken pipe fails it).
 
 ## Decky plugin
 
