@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lee Ford <472320+leeford@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 10:35:52 +0000
+Subject: [PATCH] Drop the DumpRequest member initializers for clang-cl
+
+clang rejects `inline static DumpRequest _request {}` while the enclosing class
+is incomplete if the nested struct has default member initializers. The object
+has static storage, so its members start zeroed without them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ OptiScaler/misc/CrashDumps.h | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/OptiScaler/misc/CrashDumps.h b/OptiScaler/misc/CrashDumps.h
+index 20f5d6b..54745f3 100644
+--- a/OptiScaler/misc/CrashDumps.h
++++ b/OptiScaler/misc/CrashDumps.h
+@@ -20,11 +20,11 @@ class CrashDumps
+     // Static, the dumper can outlive the wait of the thread that asked for it
+     struct DumpRequest
+     {
+-        const wchar_t* kind = nullptr;
+-        DWORD code = 0;
+-        DWORD threadId = 0;
+-        EXCEPTION_POINTERS* exception = nullptr;
+-        BOOL written = FALSE;
++        const wchar_t* kind;
++        DWORD code;
++        DWORD threadId;
++        EXCEPTION_POINTERS* exception;
++        BOOL written;
+     };
+ 
+     // First chance exceptions can be handled by the game, a few dumps are enough
