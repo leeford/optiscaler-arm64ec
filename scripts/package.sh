@@ -63,6 +63,8 @@ rm -f "$DIST"/OptiScaler-arm64ec-*.zip
 (cd "$p" && find . -type f | LC_ALL=C sort | zip -q -X -9 "$DIST/$zip_name" -@)
 
 cat > "$DIST/release-notes.md" <<EOF
+**Nightly build:** automatic build of upstream master. It compiled, but nobody has tested it on a device.
+
 Unofficial ARM64EC build of [OptiScaler](https://github.com/optiscaler/OptiScaler) for Proton ARM64 (Armada OS, FEX, Turnip).
 
 **Base version:** $version

@@ -89,7 +89,9 @@ jobs:
           } > issue.md
           open=$(gh issue list --label "$CONFLICT_LABEL" --state open --json number -q '.[0].number')
           if [ -n "$open" ]; then
-            gh issue comment "$open" --body-file issue.md
+            # The nightly retries the same upstream commit; only report a new one.
+            seen=$(gh issue view "$open" --json body,comments -q '.body, .comments[].body')
+            grep -qF "${{ steps.decide.outputs.upstream }}" <<<"$seen" || gh issue comment "$open" --body-file issue.md
           else
             gh issue create --label "$CONFLICT_LABEL" \
               --title "Patch series conflicts with mainline ${{ steps.decide.outputs.upstream }}" --body-file issue.md
@@ -116,13 +118,14 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release
-        if: steps.decide.outputs.build == 'true' && github.event_name != 'push'
+        if: steps.decide.outputs.build == 'true'
         run: |
           zip=${{ steps.package.outputs.zip }}
           short=$(basename "$zip" .zip); short=${short##*-}
-          tag="arm64ec-$(date -u +%Y%m%d)-$short-$(git rev-parse --short=7 HEAD)"
+          # Not --prerelease: the plugin asks for /releases/latest, which skips those.
+          tag="nightly-$(date -u +%Y%m%d)-$short-$(git rev-parse --short=7 HEAD)-r$GITHUB_RUN_NUMBER"
           gh release create "$tag" "$zip" --target "$GITHUB_SHA" --latest \
-            --title "OptiScaler ARM64EC $(date -u +%Y-%m-%d) ($short)" --notes-file dist/release-notes.md
+            --title "OptiScaler ARM64EC nightly $(date -u +%Y-%m-%d) ($short)" --notes-file dist/release-notes.md
 
       - name: Close resolved conflict issues
         if: success() && steps.decide.outputs.build == 'true'

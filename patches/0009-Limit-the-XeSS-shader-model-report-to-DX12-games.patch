@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 05:49:52 +0100
-Subject: [PATCH 09/18] Limit the XeSS shader model report to DX12 games
+Subject: [PATCH 09/17] Limit the XeSS shader model report to DX12 games
 
 xess_12 wraps the DX12 XeSS feature, so DX11 games got past context creation
 too and then stalled on every frame, as sharing their textures with D3D12

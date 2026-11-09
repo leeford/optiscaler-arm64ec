@@ -1,6 +1,11 @@
 #!/bin/bash
 # Check out mainline OptiScaler and apply this repo's patch series on top.
 #
+# The patches apply exactly on the commit in patches/BASE; the result is then
+# rebased onto UPSTREAM_REF. git am -3 alone cannot do this: a patch's index lines
+# name blobs from the old base plus earlier patches, which do not exist on a newer
+# base, so any file touched by two patches and changed upstream fails with no merge.
+#
 #   scripts/prepare-source.sh [SRC_DIR] [UPSTREAM_REF]
 #
 #   SRC_DIR       where the checkout lives (default: ./src)
@@ -26,20 +31,21 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 # Enough history for 3-way merges of the patches.
 git_ fetch -q --depth 200 upstream "$REF"
+base=$(git_ rev-parse FETCH_HEAD)
+series_base=$(cat "$here/patches/BASE")
+git_ fetch -q --depth 200 upstream "$series_base"
 git_ am --abort >/dev/null 2>&1 || true
-git_ checkout -q -f -B arm64ec FETCH_HEAD
+git_ rebase --abort >/dev/null 2>&1 || true
+git_ checkout -q -f -B arm64ec "$series_base"
 git_ clean -q -fdx -e '/external/'
-base=$(git_ rev-parse HEAD)
-git_ update-ref refs/upstream-base "$base"   # read by package.sh
-echo "upstream: $base ($(git_ log -1 --format=%cs HEAD))"
-
-echo "== submodules"
-GIT_LFS_SKIP_SMUDGE=1 git_ submodule -q sync
-GIT_LFS_SKIP_SMUDGE=1 git_ submodule -q update --init --depth 1 --jobs 4
+git_ update-ref refs/upstream-base "$base"   # read by package.sh and refresh-patches.sh
+echo "upstream: $base ($(git_ log -1 --format=%cs "$base"))"
+echo "patches written on: $series_base"
 
 echo "== patch series"
-if ! git_ am -q -3 --keep-cr "$here"/patches/*.patch; then
-  failing=$(git_ am --show-current-patch=raw 2>/dev/null | sed -n 's/^Subject: //p' | head -1)
+git_ am -q --keep-cr "$here"/patches/*.patch
+if ! git_ rebase -q --onto "$base" "$series_base" arm64ec; then
+  failing=$(git_ log -1 --format=%s REBASE_HEAD 2>/dev/null || true)
   files=$(git_ diff --name-only --diff-filter=U || true)
   {
     echo "Upstream commit: \`$base\`"
@@ -47,12 +53,16 @@ if ! git_ am -q -3 --keep-cr "$here"/patches/*.patch; then
     echo "Failing patch: **${failing:-unknown}**"
     echo
     echo "Conflicting files:"
-    if [ -n "$files" ]; then printf -- '- `%s`\n' $files; else echo "- (patch does not apply; see the workflow log)"; fi
+    if [ -n "$files" ]; then printf -- '- `%s`\n' $files; else echo "- (none listed; see the workflow log)"; fi
   } > "$report"
   cat "$report"
   exit 3
 fi
 echo "applied $(ls "$here"/patches/*.patch | wc -l) patches"
+
+echo "== submodules"
+GIT_LFS_SKIP_SMUDGE=1 git_ submodule -q sync
+GIT_LFS_SKIP_SMUDGE=1 git_ submodule -q update --init --depth 1 --jobs 4
 
 # unordered_dense uses _umul128, which ARM64EC does not have. The submodule pin
 # cannot carry the change, so patch the checkout; skip if already applied.

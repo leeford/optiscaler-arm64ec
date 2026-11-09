@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 22:07:10 +0100
-Subject: [PATCH 06/18] Apply clang-format to the SGSR 2 and D3D12 hook changes
+Subject: [PATCH 06/17] Apply clang-format to the SGSR 2 and D3D12 hook changes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
@@ -30,7 +30,7 @@ index f4e07ad..7afb667 100644
          }
      }
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 9480d40..1477e39 100644
+index c3601db..16a8a63 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
 @@ -1296,9 +1296,9 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
@@ -46,7 +46,7 @@ index 9480d40..1477e39 100644
  }
  
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
-@@ -7119,7 +7119,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+@@ -7122,7 +7122,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
          // xess or dlss version >= 2.5.1
          constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
          const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;

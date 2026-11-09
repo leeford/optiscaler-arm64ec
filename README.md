@@ -108,13 +108,13 @@ On your machine (see "Build locally" for the toolchain):
 scripts/refresh-patches.sh
 ```
 
-Resolve the files `git am` stops on in `src/`, then run:
+Resolve the files the rebase stops on in `src/`, then run:
 
 ```bash
-git -C src add -A && git -C src am --continue
+git -C src add -A && git -C src rebase --continue
 ```
 
-Repeat until the series is applied, then export and push:
+Repeat until the rebase finishes, then export and push:
 
 ```bash
 scripts/refresh-patches.sh --export

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 11:32:45 +0100
-Subject: [PATCH 11/18] Run Vulkan evaluates made inside a render pass after it
+Subject: [PATCH 11/17] Run Vulkan evaluates made inside a render pass after it
  ends
 
 Unity's plugin events reach NGX on a secondary command buffer continuing
@@ -376,7 +376,7 @@ index 374c0a6..e9307ee 100644
      o_vkFreeCommandBuffers(device, commandPool, commandBufferCount, pCommandBuffers);
  }
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
-index 70c0f98..c02a9b0 100644
+index 22400f3..f450b51 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
 @@ -6,6 +6,7 @@
@@ -387,7 +387,7 @@ index 70c0f98..c02a9b0 100644
  #include "NVNGX_Parameter.h"
  #include "proxies/NVNGX_Proxy.h"
  
-@@ -835,6 +836,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*
+@@ -846,6 +847,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*
          return Nvngx_FG::VULKAN_ReleaseFeature(InHandle);
      }
  
@@ -396,7 +396,7 @@ index 70c0f98..c02a9b0 100644
      if (!shutdown)
          LOG_INFO("releasing feature with id {0}", handleId);
  
-@@ -937,6 +940,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer
+@@ -948,6 +951,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer
          return Nvngx_FG::VULKAN_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
      }
  

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 05:15:24 +0100
-Subject: [PATCH 07/18] Run XeSS on DX12 under vkd3d-proton below SM 6.4
+Subject: [PATCH 07/17] Run XeSS on DX12 under vkd3d-proton below SM 6.4
 
 vkd3d-proton reports SM 6.0 when the device lacks native 16-bit ops, which
 makes xessD3D12CreateContext fail with Unsupported Device. XeSS still runs
@@ -16,13 +16,13 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  OptiScaler.ini                                 |  1 +
  OptiScaler/hooks/D3D12_Hooks.cpp               | 14 ++++++++++++++
  OptiScaler/hooks/D3D12_Hooks.h                 | 11 +++++++++++
- OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp          | 13 +++++++++++++
+ OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp          | 12 ++++++++++++
  OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp |  2 ++
  arm64ec/README-ARM64EC.md                      | 10 ++++++----
- 6 files changed, 47 insertions(+), 4 deletions(-)
+ 6 files changed, 46 insertions(+), 4 deletions(-)
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 593fb90..bc988f9 100644
+index 5340b05..6ffe8eb 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
 @@ -9,6 +9,7 @@ Dx11Upscaler=auto
@@ -95,17 +95,14 @@ index b56d1b5..85b2297 100644
  
  class ScopedHideMinPrecision16
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-index 975eb77..c58932d 100644
+index c3d5954..d0eae04 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-@@ -567,7 +567,20 @@ static Upscaler GetUpscalerBackend()
-         upscaler = Upscaler::FFX;
+@@ -582,6 +582,18 @@ static Upscaler GetUpscalerBackend()
+         return Upscaler::DLSS;
+     }
  
-     if (Config::Instance()->Dx12Upscaler.has_value())
-+    {
-         upscaler = Config::Instance()->Dx12Upscaler.value();
-+    }
-+    else if (upscaler == Upscaler::XeSS && primaryGpu.d3d12IsVkd3dProton && D3D12Device != nullptr)
++    if (primaryGpu.d3d12IsVkd3dProton && D3D12Device != nullptr)
 +    {
 +        // XeSS can run below SM 6.4 on vkd3d-proton, but such GPUs are too slow for it to be the default
 +        D3D12_FEATURE_DATA_SHADER_MODEL shaderModel { D3D_SHADER_MODEL_6_4 };
@@ -113,12 +110,13 @@ index 975eb77..c58932d 100644
 +        if (FAILED(D3D12Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel))) ||
 +            shaderModel.HighestShaderModel < D3D_SHADER_MODEL_6_4)
 +        {
-+            upscaler = Upscaler::FSR22;
++            return Upscaler::FSR22;
 +        }
 +    }
- 
-     return upscaler;
++
+     return Upscaler::XeSS;
  }
+ 
 diff --git a/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp b/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp
 index 6423fcc..46def2d 100644
 --- a/OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp

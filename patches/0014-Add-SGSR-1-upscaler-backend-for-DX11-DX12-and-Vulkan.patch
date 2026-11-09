@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 13:42:43 +0100
-Subject: [PATCH 14/18] Add SGSR 1 upscaler backend for DX11, DX12 and Vulkan
+Subject: [PATCH 14/17] Add SGSR 1 upscaler backend for DX11, DX12 and Vulkan
 
 Compute port of Snapdragon GSR 1's RGBA mode, sharing one shader between
 FXC and glslang. It follows the frame's jitter and keeps HDR scene color
@@ -69,7 +69,7 @@ index 690911d..e7f9ffc 100644
  /OptiScaler/upscalers/sgsr2/generated/*.h
 +/OptiScaler/upscalers/sgsr1/generated/*.h
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 1fa9382..36a9555 100644
+index d200212..a2fd546 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
 @@ -2,18 +2,18 @@
@@ -148,10 +148,10 @@ index 60cc3f4..ff17c0a 100644
      Reset
  };
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
-index f0572d9..dd437dd 100644
+index 0160d8c..de56529 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
-@@ -799,7 +799,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+@@ -810,7 +810,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
      auto upscaler = deviceContext->GetUpscalerType();
      if (!upscaleResult && !deviceContext->IsInited() &&
          (upscaler == Upscaler::XeSS || upscaler == Upscaler::XeSS_on12 || upscaler == Upscaler::DLSS ||
@@ -162,7 +162,7 @@ index f0572d9..dd437dd 100644
          ImGui::InsertNotification({ ImGuiToastType::Error, 10000, "Upscaler failed to run!" });
          state.newBackend = Upscaler::FSR22;
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 62e2bb5..9eb55ac 100644
+index 35675b6..ff4022e 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
 @@ -1289,23 +1289,24 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
@@ -198,7 +198,7 @@ index 62e2bb5..9eb55ac 100644
  }
  
  template <HasDefaultValue B> void MenuCommon::AddResourceBarrier(std::string name, CustomOptional<int32_t, B>* value)
-@@ -7119,8 +7120,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+@@ -7122,8 +7123,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
          // xess or dlss version >= 2.5.1
          constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
          const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 05:15:48 +0100
-Subject: [PATCH 08/18] Restore the frame generation note in the ARM64EC readme
+Subject: [PATCH 08/17] Restore the frame generation note in the ARM64EC readme
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes

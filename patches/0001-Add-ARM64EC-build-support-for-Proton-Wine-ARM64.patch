@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 13:22:05 +0100
-Subject: [PATCH 01/18] Add ARM64EC build support for Proton/Wine ARM64
+Subject: [PATCH 01/17] Add ARM64EC build support for Proton/Wine ARM64
 
 Add Release and ReleaseDebug ARM64EC configurations, Windows build
 scripts for OptiScaler and its dependencies, and Proton install tooling
@@ -35,7 +35,7 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 arm64ec/patches/unordered_dense-arm64ec.patch
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index d49425c..3e7a15b 100644
+index c93c0d0..b111d9b 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
 @@ -878,7 +878,7 @@ Height=auto

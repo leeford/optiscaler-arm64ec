@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 15:49:02 +0100
-Subject: [PATCH 04/18] Add SGSR 2 upscaler backend for DX12
+Subject: [PATCH 04/17] Add SGSR 2 upscaler backend for DX12
 
 Run the same Convert and Upscale shaders on DX12 and offer sgsr2 as a
 Dx12Upscaler. The constant calculation moves to SGSR2ConstantBuilder so
@@ -37,7 +37,7 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 23cc971..593fb90 100644
+index 909aecc..5340b05 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
 @@ -6,7 +6,7 @@
@@ -76,7 +76,7 @@ index f6bff03..08f1636 100644
  };
  
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index bc6e661..9480d40 100644
+index 57c66e6..c3601db 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
 @@ -1297,7 +1297,8 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)

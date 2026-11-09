@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 12:45:28 +0100
-Subject: [PATCH 12/18] Add SGSR 2 upscaler backend for Vulkan
+Subject: [PATCH 12/17] Add SGSR 2 upscaler backend for Vulkan
 
 Ports the DX11/DX12 backend to Vulkan with the same HLSL. glslang can't
 declare a storage image of unknown format, so build_vk.sh patches the
@@ -47,7 +47,7 @@ index 08f1636..60cc3f4 100644
  };
  
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 1477e39..62e2bb5 100644
+index 16a8a63..35675b6 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
 @@ -1304,8 +1304,8 @@ void MenuCommon::AddDx12Backends(Upscaler upscaler)

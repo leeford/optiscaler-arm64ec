@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 21:40:22 +0100
-Subject: [PATCH 05/18] Fix FSR 2.x on DX12 under vkd3d-proton without native
+Subject: [PATCH 05/17] Fix FSR 2.x on DX12 under vkd3d-proton without native
  16-bit ops
 
 FSR 2.1 and 2.2 select their FP16 shaders from MinPrecisionSupport alone.

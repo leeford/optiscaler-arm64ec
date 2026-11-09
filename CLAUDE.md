@@ -9,7 +9,7 @@ this file covers state and decisions.
 
 A patch series plus a Linux build for mainline OptiScaler, not a fork of it.
 `scripts/prepare-source.sh` clones optiscaler/OptiScaler at a ref into `src/`,
-applies `patches/*.patch` with `git am -3`, and patches the `unordered_dense`
+applies `patches/*.patch` on `patches/BASE`, rebases onto that ref, and patches the `unordered_dense`
 submodule. `scripts/build.sh` builds with clang-cl/lld-link (LLVM 22) against the
 MSVC CRT + Windows SDK from xwin. `scripts/package.sh` makes the zip the Decky
 plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.04.
@@ -20,9 +20,15 @@ plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.0
   as an optional extra and not yet requested.
 - Patch series on top of fresh mainline, not a submodule or a long-lived fork.
 - Patches came from nydal91/optiscaler_arm64ec (ARM64EC hooks, SGSR 1/2, Wine and
-  Adreno fixes) rebased onto mainline d94fb15, plus `0018-Build-with-clang-cl`.
-  README-only patches (0015, 0017) were dropped to avoid needless conflicts.
+  Adreno fixes) rebased onto mainline d94fb15, plus the `Build-with-clang-cl` patch.
+  README-only patches were dropped to avoid needless conflicts.
 - Overlay key: Insert (`ShortcutKey=0x2D`, set at package time).
+- Releases are nightlies: every build that compiles (schedule, push or manual) is
+  published as Latest with no device test, tagged `nightly-...` and titled and noted
+  as nightly. Not `--prerelease`, because the plugin uses `/releases/latest`.
+  Roll back by pinning a tag in the plugin's `source.json`.
+- `patches/BASE` is the upstream commit the series applies on. `prepare-source.sh`
+  applies it there, then rebases onto the target; `refresh-patches.sh --export` updates it.
 - Release asset: exactly one `OptiScaler-arm64ec-<upstream sha7>.zip`; notes carry
   `Base version:` and `Build commit:` lines that the plugin parses.
 - Repo is public so the plugin can download releases anonymously.
@@ -45,7 +51,7 @@ plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.0
 - Detours and FreeType 2.13.3 are built from source; FidelityFX FSR 2/3 static libs
   are still prebuilt (`prebuilt/fsr-arm64ec`, see PROVENANCE.md).
 - Full package is ~180 MB because of the x64 XeSS/FidelityFX runtimes.
-- `0019` skips `hookGdi32()` on ARM64EC: clang-cl compiled `hkD3DKMTQueryAdapterInfo`
+- The `Skip-the-gdi32` patch skips `hookGdi32()` on ARM64EC: clang-cl compiled `hkD3DKMTQueryAdapterInfo`
   to a lone `BRK #1`, so D3D11 games died at launch (illegal instruction at
   `dxgi.dll+0x8312C` in the d94fb15 build). Root cause in clang not yet found; mainline
   added the hook on 2026-10-05, after Sloptiscaler's base, which is why that build is fine.
