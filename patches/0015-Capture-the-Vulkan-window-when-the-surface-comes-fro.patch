@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 15:48:13 +0100
-Subject: [PATCH 15/17] Capture the Vulkan window when the surface comes from
+Subject: [PATCH 15/18] Capture the Vulkan window when the surface comes from
  vkGetInstanceProcAddr
 
 Under Wine the game gets vkCreateWin32SurfaceKHR past the detoured vulkan-1
@@ -14,10 +14,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  1 file changed, 8 insertions(+)
 
 diff --git a/OptiScaler/hooks/Vulkan_Hooks.cpp b/OptiScaler/hooks/Vulkan_Hooks.cpp
-index 27f2a4c..7545d3c 100644
+index 902e4fe..224ada8 100644
 --- a/OptiScaler/hooks/Vulkan_Hooks.cpp
 +++ b/OptiScaler/hooks/Vulkan_Hooks.cpp
-@@ -1399,6 +1399,14 @@ PFN_vkVoidFunction hkvkGetInstanceProcAddr(VkInstance instance, const char* pNam
+@@ -1390,6 +1390,14 @@ PFN_vkVoidFunction hkvkGetInstanceProcAddr(VkInstance instance, const char* pNam
      {
          return (PFN_vkVoidFunction) hkvkDestroyDevice;
      }

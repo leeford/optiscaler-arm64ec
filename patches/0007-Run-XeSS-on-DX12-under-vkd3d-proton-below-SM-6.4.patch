@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 05:15:24 +0100
-Subject: [PATCH 07/17] Run XeSS on DX12 under vkd3d-proton below SM 6.4
+Subject: [PATCH 07/18] Run XeSS on DX12 under vkd3d-proton below SM 6.4
 
 vkd3d-proton reports SM 6.0 when the device lacks native 16-bit ops, which
 makes xessD3D12CreateContext fail with Unsupported Device. XeSS still runs
@@ -22,19 +22,19 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  6 files changed, 46 insertions(+), 4 deletions(-)
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 5340b05..6ffe8eb 100644
+index 5d87c02..4a5d2db 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
-@@ -9,6 +9,7 @@ Dx11Upscaler=auto
+@@ -10,6 +10,7 @@ Dx11Upscaler=auto
  ; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
- ; or the name of a folder in the 'custom' folder
+ ; or the name of a custom upscaler: a folder in the 'custom' folder or one registered by an ASI plugin
  ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
 +; On vkd3d-proton below SM 6.4 (Adreno) auto uses fsr22 instead of XeSS, which is very slow there
  Dx12Upscaler=auto
  
  ; Select Upscaler for Vulkan games
 diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
-index 7afb667..84d426e 100644
+index 5358ebd..877cab8 100644
 --- a/OptiScaler/hooks/D3D12_Hooks.cpp
 +++ b/OptiScaler/hooks/D3D12_Hooks.cpp
 @@ -70,6 +70,7 @@ static PFN_CreateUnorderedAccessView o_CreateUnorderedAccessView = nullptr;
@@ -53,7 +53,7 @@ index 7afb667..84d426e 100644
  
  void D3D12Hooks::SetRootSignatureTracking(bool enable) { t_upscalerActive = !enable; }
  
-@@ -1825,6 +1827,18 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+@@ -1833,6 +1835,18 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
  {
      auto result = o_CheckFeatureSupport(device, Feature, pFeatureSupportData, FeatureSupportDataSize);
  
@@ -95,10 +95,10 @@ index b56d1b5..85b2297 100644
  
  class ScopedHideMinPrecision16
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-index c3d5954..d0eae04 100644
+index 38cf208..728dc0a 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-@@ -582,6 +582,18 @@ static Upscaler GetUpscalerBackend()
+@@ -591,6 +591,18 @@ static Upscaler GetUpscalerBackend()
          return Upscaler::DLSS;
      }
  

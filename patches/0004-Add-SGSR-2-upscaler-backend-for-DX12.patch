@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 15:49:02 +0100
-Subject: [PATCH 04/17] Add SGSR 2 upscaler backend for DX12
+Subject: [PATCH 04/18] Add SGSR 2 upscaler backend for DX12
 
 Run the same Convert and Upscale shaders on DX12 and offer sgsr2 as a
 Dx12Upscaler. The constant calculation moves to SGSR2ConstantBuilder so
@@ -37,23 +37,23 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 909aecc..5340b05 100644
+index 96d93be..5d87c02 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
-@@ -6,7 +6,7 @@
+@@ -7,7 +7,7 @@
  Dx11Upscaler=auto
  
  ; Select Upscaler for Dx12 games
 -; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), dlss
 +; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
- ; or the name of a folder in the 'custom' folder
+ ; or the name of a custom upscaler: a folder in the 'custom' folder or one registered by an ASI plugin
  ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
  Dx12Upscaler=auto
 diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
-index 6f1c6a2..2d9fb88 100644
+index 4558d30..d1623fd 100644
 --- a/OptiScaler/OptiTypes.cpp
 +++ b/OptiScaler/OptiTypes.cpp
-@@ -161,7 +161,7 @@ std::string UpscalerToCode(Upscaler upscaler)
+@@ -164,7 +164,7 @@ std::string UpscalerToCode(Upscaler upscaler)
          return "dlssd";
      case Upscaler::FSR31: // DX11 only
          return "fsr31";
@@ -63,7 +63,7 @@ index 6f1c6a2..2d9fb88 100644
      default: // Upscaler::Reset and unknown
          return "";
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index f6bff03..08f1636 100644
+index 4ab4365..30e46fe 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
 @@ -68,7 +68,7 @@ enum class Upscaler
@@ -76,10 +76,10 @@ index f6bff03..08f1636 100644
  };
  
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 57c66e6..c3601db 100644
+index e8742c3..6b35b20 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1297,7 +1297,8 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
+@@ -1285,7 +1285,8 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
  void MenuCommon::AddDx12Backends(Upscaler upscaler)
  {
      RenderUpscalerCombo(API::DX12, upscaler,
@@ -90,7 +90,7 @@ index 57c66e6..c3601db 100644
  
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
-index 1454dc6..ad523ae 100644
+index 1642895..e7c3feb 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 @@ -12,6 +12,7 @@
@@ -101,8 +101,8 @@ index 1454dc6..ad523ae 100644
  #include "FeatureProvider_Dx11.h"
  #include <misc/IdentifyGpu.h>
  #include <misc/CustomProviders.h>
-@@ -44,6 +45,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
-         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters, CustomProviders::IsFfx(custom) ? custom : "");
+@@ -45,6 +46,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters, custom);
          break;
  
 +    case Upscaler::SGSR2:
@@ -110,7 +110,7 @@ index 1454dc6..ad523ae 100644
 +        break;
 +
      case Upscaler::DLSS:
-         if (CustomProviders::IsDlss(custom))
+         if (!custom.empty())
          {
 diff --git a/OptiScaler/upscalers/IFeature_Dx12.cpp b/OptiScaler/upscalers/IFeature_Dx12.cpp
 index fb997ed..993a88f 100644

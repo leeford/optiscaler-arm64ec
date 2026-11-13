@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 13:09:08 +0100
-Subject: [PATCH 13/17] List SGSR 2 for Vulkan in the ini and format its shader
+Subject: [PATCH 13/18] List SGSR 2 for Vulkan in the ini and format its shader
  headers
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -14,16 +14,16 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  4 files changed, 1689 insertions(+), 2671 deletions(-)
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 6ffe8eb..d200212 100644
+index 4a5d2db..ca92bd1 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
-@@ -13,7 +13,7 @@ Dx11Upscaler=auto
+@@ -14,7 +14,7 @@ Dx11Upscaler=auto
  Dx12Upscaler=auto
  
  ; Select Upscaler for Vulkan games
 -; fsr21 (native VK), fsr22 (native VK), ffx (native FSR 2.3; 3.1), xess (native VK), fsr21_12 (VKon12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
 +; fsr21 (native VK), fsr22 (native VK), ffx (native FSR 2.3; 3.1), xess (native VK), sgsr2 (native VK), fsr21_12 (VKon12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
- ; or the name of a folder in the 'custom' folder
+ ; or the name of a custom upscaler with 'ffx_vk', 'ffx' (VKon12) or 'dlss', the first one it has is used
  VulkanUpscaler=auto
  
 diff --git a/OptiScaler/upscalers/sgsr2/precompile/sgsr2_convert_Vk.h b/OptiScaler/upscalers/sgsr2/precompile/sgsr2_convert_Vk.h

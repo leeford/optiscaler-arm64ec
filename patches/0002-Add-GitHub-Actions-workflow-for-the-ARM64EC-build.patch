@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Thu, 5 Nov 2026 13:29:18 +0100
-Subject: [PATCH 02/17] Add GitHub Actions workflow for the ARM64EC build
+Subject: [PATCH 02/18] Add GitHub Actions workflow for the ARM64EC build
 
 Build on pushes to master and on demand, and upload the full and core
 packages as artifacts. Pushing an arm64ec-* tag also publishes them as a

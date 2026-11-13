@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lee Ford <472320+leeford@users.noreply.github.com>
 Date: Sat, 7 Nov 2026 22:06:36 +0000
-Subject: [PATCH 17/17] Skip the gdi32 D3DKMTQueryAdapterInfo hook on ARM64EC
+Subject: [PATCH 17/18] Skip the gdi32 D3DKMTQueryAdapterInfo hook on ARM64EC
 
 clang-cl compiles hkD3DKMTQueryAdapterInfo to a single BRK #1 for
 ARM64EC, so the first call through the detour raises an illegal

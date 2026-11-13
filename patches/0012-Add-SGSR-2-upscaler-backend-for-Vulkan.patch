@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 12:45:28 +0100
-Subject: [PATCH 12/17] Add SGSR 2 upscaler backend for Vulkan
+Subject: [PATCH 12/18] Add SGSR 2 upscaler backend for Vulkan
 
 Ports the DX11/DX12 backend to Vulkan with the same HLSL. glslang can't
 declare a storage image of unknown format, so build_vk.sh patches the
@@ -34,7 +34,7 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/upscalers/sgsr2/shaders/build_vk.sh
 
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index 08f1636..60cc3f4 100644
+index 30e46fe..aca5c6b 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
 @@ -68,7 +68,7 @@ enum class Upscaler
@@ -47,10 +47,10 @@ index 08f1636..60cc3f4 100644
  };
  
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 16a8a63..35675b6 100644
+index e6c54a6..b171364 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1304,8 +1304,8 @@ void MenuCommon::AddDx12Backends(Upscaler upscaler)
+@@ -1292,8 +1292,8 @@ void MenuCommon::AddDx12Backends(Upscaler upscaler)
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
  {
      RenderUpscalerCombo(API::Vulkan, upscaler,
@@ -60,9 +60,9 @@ index 16a8a63..35675b6 100644
 +                          Upscaler::FSR21_on12, Upscaler::FFX_on12, Upscaler::DLSS, Upscaler::DLSS_on12 });
  }
  
- template <HasDefaultValue B> void MenuCommon::AddResourceBarrier(std::string name, CustomOptional<int32_t, B>* value)
+ // Upscaler for the game's ray reconstruction: DLSSDs first, NVIDIA's then custom ones, regular upscalers after.
 diff --git a/OptiScaler/upscalers/FeatureProvider_Vk.cpp b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
-index adb5a9c..e4ea0b5 100644
+index f32db15..774c848 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 @@ -15,6 +15,7 @@
@@ -72,9 +72,9 @@ index adb5a9c..e4ea0b5 100644
 +#include "upscalers/sgsr2/SGSR2Feature_Vk.h"
  #include <misc/IdentifyGpu.h>
  #include <misc/CustomProviders.h>
- 
-@@ -53,6 +54,10 @@ bool FeatureProvider_Vk::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NGX_
-         *feature = std::make_unique<FFXFeatureVkOn12>(handleId, parameters);
+ #include <upscalers/nvngx/Nvngx_RR.h>
+@@ -54,6 +55,10 @@ bool FeatureProvider_Vk::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NGX_
+         *feature = std::make_unique<FFXFeatureVkOn12>(handleId, parameters, custom);
          break;
  
 +    case Upscaler::SGSR2:
@@ -82,8 +82,8 @@ index adb5a9c..e4ea0b5 100644
 +        break;
 +
      case Upscaler::DLSS:
-         if (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value())
-         {
+         // A custom DLSS doesn't need a DLSS capable GPU
+         if (!custom.empty() || (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value()))
 diff --git a/OptiScaler/upscalers/IFeature_Vk.cpp b/OptiScaler/upscalers/IFeature_Vk.cpp
 index e045c8b..7657088 100644
 --- a/OptiScaler/upscalers/IFeature_Vk.cpp

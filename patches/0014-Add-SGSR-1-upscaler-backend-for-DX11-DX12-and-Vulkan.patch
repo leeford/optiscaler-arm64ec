@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 13:42:43 +0100
-Subject: [PATCH 14/17] Add SGSR 1 upscaler backend for DX11, DX12 and Vulkan
+Subject: [PATCH 14/18] Add SGSR 1 upscaler backend for DX11, DX12 and Vulkan
 
 Compute port of Snapdragon GSR 1's RGBA mode, sharing one shader between
 FXC and glslang. It follows the frame's jitter and keeps HDR scene color
@@ -69,21 +69,22 @@ index 690911d..e7f9ffc 100644
  /OptiScaler/upscalers/sgsr2/generated/*.h
 +/OptiScaler/upscalers/sgsr1/generated/*.h
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index d200212..a2fd546 100644
+index ca92bd1..47b9edb 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
-@@ -2,18 +2,18 @@
+@@ -2,19 +2,19 @@
  [Upscalers]
  ; -------------------------------------------------------
  ; Select Upscaler for Dx11 games
 -; fsr22 (native DX11), fsr31 (native DX11), sgsr2 (native DX11), xess (native DX11, Arc only), xess_12 (dx11on12), fsr21_12 (dx11on12), fsr22_12 (dx11on12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
 +; fsr22 (native DX11), fsr31 (native DX11), sgsr1 (native DX11), sgsr2 (native DX11), xess (native DX11, Arc only), xess_12 (dx11on12), fsr21_12 (dx11on12), fsr22_12 (dx11on12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
+ ; or the name of a custom upscaler with 'ffx' or 'dlss', run through dx11on12
  Dx11Upscaler=auto
  
  ; Select Upscaler for Dx12 games
 -; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
 +; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr1, sgsr2, dlss
- ; or the name of a folder in the 'custom' folder
+ ; or the name of a custom upscaler: a folder in the 'custom' folder or one registered by an ASI plugin
  ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
  ; On vkd3d-proton below SM 6.4 (Adreno) auto uses fsr22 instead of XeSS, which is very slow there
  Dx12Upscaler=auto
@@ -91,14 +92,14 @@ index d200212..a2fd546 100644
  ; Select Upscaler for Vulkan games
 -; fsr21 (native VK), fsr22 (native VK), ffx (native FSR 2.3; 3.1), xess (native VK), sgsr2 (native VK), fsr21_12 (VKon12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
 +; fsr21 (native VK), fsr22 (native VK), ffx (native FSR 2.3; 3.1), xess (native VK), sgsr1 (native VK), sgsr2 (native VK), fsr21_12 (VKon12), ffx_12 (FSR 2.3; 3.1; 4.x), dlss - Default (auto) is fsr22
- ; or the name of a folder in the 'custom' folder
+ ; or the name of a custom upscaler with 'ffx_vk', 'ffx' (VKon12) or 'dlss', the first one it has is used
  VulkanUpscaler=auto
  
 diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
-index 2d9fb88..285c0f4 100644
+index d1623fd..8b7b16c 100644
 --- a/OptiScaler/OptiTypes.cpp
 +++ b/OptiScaler/OptiTypes.cpp
-@@ -83,6 +83,9 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
+@@ -86,6 +86,9 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
      case Upscaler::DLSSD:
          return "DLSSD";
  
@@ -108,7 +109,7 @@ index 2d9fb88..285c0f4 100644
      case Upscaler::SGSR2:
          return "SGSR 2";
      }
-@@ -125,6 +128,7 @@ std::string UpscalerShortName(Upscaler upscaler)
+@@ -128,6 +131,7 @@ std::string UpscalerShortName(Upscaler upscaler)
      case Upscaler::DLSSD:
          return "DLSSD";
  
@@ -116,7 +117,7 @@ index 2d9fb88..285c0f4 100644
      case Upscaler::SGSR2:
          return "SGSR";
      }
-@@ -161,6 +165,8 @@ std::string UpscalerToCode(Upscaler upscaler)
+@@ -164,6 +168,8 @@ std::string UpscalerToCode(Upscaler upscaler)
          return "dlssd";
      case Upscaler::FSR31: // DX11 only
          return "fsr31";
@@ -125,9 +126,9 @@ index 2d9fb88..285c0f4 100644
      case Upscaler::SGSR2:
          return "sgsr2";
      default: // Upscaler::Reset and unknown
-@@ -179,7 +185,7 @@ Upscaler CodeToUpscaler(const std::string& code)
+@@ -183,7 +189,7 @@ Upscaler CodeToUpscaler(const std::string& code)
          { "dlss", Upscaler::DLSS },         { "dlss_12", Upscaler::DLSS_on12 },
-         { "dlssd", Upscaler::DLSSD },       { "fsr31", Upscaler::FSR31 },
+         { "dlssd", Upscaler::DLSS },        { "fsr31", Upscaler::FSR31 },
          { "fsr31_12", Upscaler::FFX_on12 }, // for compat reasons
 -        { "sgsr2", Upscaler::SGSR2 },
 +        { "sgsr1", Upscaler::SGSR1 },       { "sgsr2", Upscaler::SGSR2 },
@@ -135,7 +136,7 @@ index 2d9fb88..285c0f4 100644
  
      auto it = mapping.find(code);
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index 60cc3f4..ff17c0a 100644
+index aca5c6b..845e00a 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
 @@ -68,6 +68,8 @@ enum class Upscaler
@@ -148,7 +149,7 @@ index 60cc3f4..ff17c0a 100644
      Reset
  };
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
-index 0160d8c..de56529 100644
+index 8f70b10..4de6476 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
 @@ -810,7 +810,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
@@ -162,10 +163,10 @@ index 0160d8c..de56529 100644
          ImGui::InsertNotification({ ImGuiToastType::Error, 10000, "Upscaler failed to run!" });
          state.newBackend = Upscaler::FSR22;
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 35675b6..ff4022e 100644
+index b171364..cdd016b 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1289,23 +1289,24 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
+@@ -1277,23 +1277,24 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
  void MenuCommon::AddDx11Backends(Upscaler upscaler)
  {
      RenderUpscalerCombo(API::DX11, upscaler,
@@ -197,8 +198,8 @@ index 35675b6..ff4022e 100644
 +                          Upscaler::DLSS_on12 });
  }
  
- template <HasDefaultValue B> void MenuCommon::AddResourceBarrier(std::string name, CustomOptional<int32_t, B>* value)
-@@ -7122,8 +7123,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+ // Upscaler for the game's ray reconstruction: DLSSDs first, NVIDIA's then custom ones, regular upscalers after.
+@@ -7424,8 +7425,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
          // xess or dlss version >= 2.5.1
          constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
          const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;
@@ -210,7 +211,7 @@ index 35675b6..ff4022e 100644
          // Determine current mode for the dropdown
          bool currentRcasEnabled = config->RcasEnabled.value_or(rcasEnabled);
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
-index e145a7e..af8c280 100644
+index 3a0a0a0..fc194d4 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 @@ -16,6 +16,7 @@
@@ -220,9 +221,9 @@ index e145a7e..af8c280 100644
 +#include "upscalers/sgsr1/SGSR1Feature_Dx11.h"
  #include "upscalers/sgsr2/SGSR2Feature_Dx11.h"
  #include <misc/IdentifyGpu.h>
- #include <imgui/ImGuiNotify.hpp>
-@@ -57,6 +58,10 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
-         *feature = std::make_unique<FFXFeatureDx11on12>(handleId, parameters);
+ #include <misc/CustomProviders.h>
+@@ -62,6 +63,10 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<FFXFeatureDx11on12>(handleId, parameters, custom);
          break;
  
 +    case Upscaler::SGSR1:
@@ -233,7 +234,7 @@ index e145a7e..af8c280 100644
          *feature = std::make_unique<SGSR2FeatureDx11>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
-index ad523ae..29acc42 100644
+index e7c3feb..b682c7a 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 @@ -12,6 +12,7 @@
@@ -244,8 +245,8 @@ index ad523ae..29acc42 100644
  #include "upscalers/sgsr2/SGSR2Feature_Dx12.h"
  #include "FeatureProvider_Dx11.h"
  #include <misc/IdentifyGpu.h>
-@@ -45,6 +46,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
-         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters, CustomProviders::IsFfx(custom) ? custom : "");
+@@ -46,6 +47,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters, custom);
          break;
  
 +    case Upscaler::SGSR1:
@@ -256,7 +257,7 @@ index ad523ae..29acc42 100644
          *feature = std::make_unique<SGSR2FeatureDx12>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/FeatureProvider_Vk.cpp b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
-index e4ea0b5..93a32f6 100644
+index 774c848..1f2a905 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 @@ -15,6 +15,7 @@
@@ -267,8 +268,8 @@ index e4ea0b5..93a32f6 100644
  #include "upscalers/sgsr2/SGSR2Feature_Vk.h"
  #include <misc/IdentifyGpu.h>
  #include <misc/CustomProviders.h>
-@@ -54,6 +55,10 @@ bool FeatureProvider_Vk::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NGX_
-         *feature = std::make_unique<FFXFeatureVkOn12>(handleId, parameters);
+@@ -55,6 +56,10 @@ bool FeatureProvider_Vk::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NGX_
+         *feature = std::make_unique<FFXFeatureVkOn12>(handleId, parameters, custom);
          break;
  
 +    case Upscaler::SGSR1:

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 11:32:45 +0100
-Subject: [PATCH 11/17] Run Vulkan evaluates made inside a render pass after it
+Subject: [PATCH 11/18] Run Vulkan evaluates made inside a render pass after it
  ends
 
 Unity's plugin events reach NGX on a secondary command buffer continuing
@@ -23,10 +23,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/hooks/Vulkan_DeferredEvaluate.h
 
 diff --git a/OptiScaler/NVNGX_Parameter.cpp b/OptiScaler/NVNGX_Parameter.cpp
-index 1473ffb..139656a 100644
+index e322816..a8746be 100644
 --- a/OptiScaler/NVNGX_Parameter.cpp
 +++ b/OptiScaler/NVNGX_Parameter.cpp
-@@ -356,6 +356,12 @@ void NVNGX_Parameters::Reset()
+@@ -357,6 +357,12 @@ void NVNGX_Parameters::Reset()
      LOG_DEBUG("End");
  }
  
@@ -376,18 +376,18 @@ index 374c0a6..e9307ee 100644
      o_vkFreeCommandBuffers(device, commandPool, commandBufferCount, pCommandBuffers);
  }
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
-index 22400f3..f450b51 100644
+index c504385..261ffa2 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Vk.cpp
-@@ -6,6 +6,7 @@
- #include "NVNGX_DLSS.h"
+@@ -7,6 +7,7 @@
  #include <framegen/nvngx/Nvngx_FG.h>
+ #include <upscalers/nvngx/Nvngx_RR.h>
  #include <inputs/FG/Upscaler_Inputs_Vk.h>
 +#include <hooks/Vulkan_DeferredEvaluate.h>
  #include "NVNGX_Parameter.h"
- #include "proxies/NVNGX_Proxy.h"
+ #include "proxies/Nvngx_Proxy.h"
  
-@@ -846,6 +847,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*
+@@ -891,6 +892,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*
          return Nvngx_FG::VULKAN_ReleaseFeature(InHandle);
      }
  
@@ -396,7 +396,7 @@ index 22400f3..f450b51 100644
      if (!shutdown)
          LOG_INFO("releasing feature with id {0}", handleId);
  
-@@ -948,6 +951,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer
+@@ -997,6 +1000,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer
          return Nvngx_FG::VULKAN_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
      }
  

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nydal91 <nydal91@hotmail.com>
 Date: Fri, 6 Nov 2026 05:49:52 +0100
-Subject: [PATCH 09/17] Limit the XeSS shader model report to DX12 games
+Subject: [PATCH 09/18] Limit the XeSS shader model report to DX12 games
 
 xess_12 wraps the DX12 XeSS feature, so DX11 games got past context creation
 too and then stalled on every frame, as sharing their textures with D3D12
@@ -16,10 +16,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  2 files changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
-index 84d426e..bf10807 100644
+index 877cab8..fa14f23 100644
 --- a/OptiScaler/hooks/D3D12_Hooks.cpp
 +++ b/OptiScaler/hooks/D3D12_Hooks.cpp
-@@ -1828,7 +1828,7 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
+@@ -1836,7 +1836,7 @@ static HRESULT hkCheckFeatureSupport(ID3D12Device* device, D3D12_FEATURE Feature
      auto result = o_CheckFeatureSupport(device, Feature, pFeatureSupportData, FeatureSupportDataSize);
  
      if (_reportShaderModel64 && SUCCEEDED(result) && Feature == D3D12_FEATURE_SHADER_MODEL &&

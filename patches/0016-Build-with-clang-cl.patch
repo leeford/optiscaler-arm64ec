@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: optiscaler-arm64ec <optiscaler-arm64ec@users.noreply.github.com>
 Date: Sat, 7 Nov 2026 19:20:15 +0000
-Subject: [PATCH 16/17] Build with clang-cl
+Subject: [PATCH 16/18] Build with clang-cl
 
 clang rejects three constructs MSVC accepts: a default member initializer
 used by a brace-initialised array inside the enclosing class, a
@@ -14,10 +14,10 @@ assignment to feature_version. Rewrite them in forms both accept.
  3 files changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp b/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
-index b47916d..f07af33 100644
+index b2bbfcb..18f2845 100644
 --- a/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
 +++ b/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
-@@ -1087,7 +1087,7 @@ void FSRFG_Dx12::DestroyFGContext()
+@@ -1088,7 +1088,7 @@ void FSRFG_Dx12::DestroyFGContext()
      _frameCount = 1;
      UpdateTarget();
      // _lastDispatchedFrame = 0;
