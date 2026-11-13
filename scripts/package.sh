@@ -33,14 +33,9 @@ p=$stage/pkg
 mkdir -p "$p/licenses" "$p/OptiScaler/D3D12_OptiScaler"
 
 cp "$DLL" "$p/OptiScaler.dll"
-# CRLF is preserved; only the overlay key and log level values change.
-# LogLevel auto means trace, which flushes to disk on every line (about 4 MB a minute
-# in game) and makes OptiScaler warn on screen after 10 minutes. Info keeps a log for
-# failed launches.
-sed -E -e "s/^(ShortcutKey=)[^;\r]*/\1$OVERLAY_KEY/" -e "s/^(LogLevel=)[^;\r]*/\12/" \
-  "$SRC/OptiScaler.ini" > "$p/OptiScaler.ini"
-grep -q "^ShortcutKey=$OVERLAY_KEY" "$p/OptiScaler.ini" || { echo "ShortcutKey not set" >&2; exit 1; }
-grep -q "^LogLevel=2" "$p/OptiScaler.ini" || { echo "LogLevel not set" >&2; exit 1; }
+# The patches leave OptiScaler.ini as mainline has it; this build's settings go in here.
+python3 -I "$here/scripts/configure-ini.py" --overlay-key "$OVERLAY_KEY" \
+  "$SRC/OptiScaler.ini" "$p/OptiScaler.ini"
 cp "$here/docs/PACKAGE-README.md" "$p/README.md"
 
 E=$SRC/external

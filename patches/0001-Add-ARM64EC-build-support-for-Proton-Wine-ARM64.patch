@@ -19,7 +19,6 @@ this repository cannot record it.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
 ---
- OptiScaler.ini                                |   4 +-
  OptiScaler/hooks/Vulkan_Hooks.cpp             |  24 +++-
  OptiScaler/upscalers/xess/XeSSFeature.cpp     |   2 +-
  arm64ec/.gitignore                            |   5 +
@@ -27,35 +26,13 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  arm64ec/docs/proton-arm64ec.md                |  86 ++++++++++++++
  arm64ec/install_proton.sh                     |  61 ++++++++++
  arm64ec/patches/unordered_dense-arm64ec.patch |  13 ++
- 8 files changed, 300 insertions(+), 6 deletions(-)
+ 7 files changed, 298 insertions(+), 4 deletions(-)
  create mode 100644 arm64ec/.gitignore
  create mode 100644 arm64ec/README-ARM64EC.md
  create mode 100644 arm64ec/docs/proton-arm64ec.md
  create mode 100755 arm64ec/install_proton.sh
  create mode 100644 arm64ec/patches/unordered_dense-arm64ec.patch
 
-diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 5695998..9c99e69 100644
---- a/OptiScaler.ini
-+++ b/OptiScaler.ini
-@@ -909,7 +909,7 @@ Height=auto
- ; Integer value - Default (auto) is 0x2D which equals VK_INSERT/Insert key, previous default key was 0x24 -> VK_HOME/Home key
- ; If you want to use e.g. VK_BACK/Backspace key, that would be 0x08 - set ShortcutKey=0x08
- ; -1 -> No shortcut key
--ShortcutKey=auto
-+ShortcutKey=0x4F
- 
- ; Extends Scaling Ratio limits to 0.1 - 6.0
- ; true or false - Default (auto) is false
-@@ -1466,7 +1466,7 @@ StaticPosY=auto
- ; -------------------------------------------------------
- ; Should a log file be created
- ; true or false - Default (auto) is false
--LogToFile=auto
-+LogToFile=true
- 
- ; Verbosity level of file logs
- ; 0 = Trace / 1 = Debug / 2 = Info / 3 = Warning / 4 = Error
 diff --git a/OptiScaler/hooks/Vulkan_Hooks.cpp b/OptiScaler/hooks/Vulkan_Hooks.cpp
 index 5c99885..902e4fe 100644
 --- a/OptiScaler/hooks/Vulkan_Hooks.cpp

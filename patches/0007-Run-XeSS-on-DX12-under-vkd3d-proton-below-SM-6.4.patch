@@ -13,26 +13,13 @@ instead of XeSS on such devices. XeSS stays available when selected.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
 ---
- OptiScaler.ini                                 |  1 +
  OptiScaler/hooks/D3D12_Hooks.cpp               | 14 ++++++++++++++
  OptiScaler/hooks/D3D12_Hooks.h                 | 11 +++++++++++
  OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp          | 12 ++++++++++++
  OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp |  2 ++
  arm64ec/README-ARM64EC.md                      | 10 ++++++----
- 6 files changed, 46 insertions(+), 4 deletions(-)
+ 5 files changed, 45 insertions(+), 4 deletions(-)
 
-diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 5d87c02..4a5d2db 100644
---- a/OptiScaler.ini
-+++ b/OptiScaler.ini
-@@ -10,6 +10,7 @@ Dx11Upscaler=auto
- ; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
- ; or the name of a custom upscaler: a folder in the 'custom' folder or one registered by an ASI plugin
- ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
-+; On vkd3d-proton below SM 6.4 (Adreno) auto uses fsr22 instead of XeSS, which is very slow there
- Dx12Upscaler=auto
- 
- ; Select Upscaler for Vulkan games
 diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
 index 5358ebd..877cab8 100644
 --- a/OptiScaler/hooks/D3D12_Hooks.cpp

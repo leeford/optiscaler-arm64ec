@@ -29,6 +29,10 @@ plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.0
   Roll back by pinning a tag in the plugin's `source.json`.
 - `patches/BASE` is the upstream commit the series applies on. `prepare-source.sh`
   applies it there, then rebases onto the target; `refresh-patches.sh --export` updates it.
+- Patches never touch `OptiScaler.ini` (upstream edits it almost daily, so it
+  conflicted constantly). Settings and notes for this build live in
+  `scripts/configure-ini.py`, run by `package.sh`; `prepare-source.sh` refuses a
+  patch that touches the ini.
 - Release asset: exactly one `OptiScaler-arm64ec-<upstream sha7>.zip`; notes carry
   `Base version:` and `Build commit:` lines that the plugin parses.
 - Repo is public so the plugin can download releases anonymously.

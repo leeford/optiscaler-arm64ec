@@ -16,6 +16,14 @@
 # checkout is left at the last patch that applied, for inspection.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
+
+# Upstream edits OptiScaler.ini almost daily, so patching it means a conflict most
+# weeks. Its changes for this build go in scripts/configure-ini.py instead.
+if ini_patches=$(grep -l '^diff --git a/OptiScaler.ini ' "$here"/patches/*.patch); then
+  echo "These patches change OptiScaler.ini; move the change to scripts/configure-ini.py:" >&2
+  echo "$ini_patches" >&2
+  exit 1
+fi
 SRC=${1:-$PWD/src}
 REF=${2:-master}
 UPSTREAM=${UPSTREAM_URL:-https://github.com/optiscaler/OptiScaler}

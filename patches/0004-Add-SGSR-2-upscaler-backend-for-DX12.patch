@@ -13,7 +13,6 @@ flight, since the GPU can still be reading the previous frame's jitter.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
 ---
- OptiScaler.ini                                |   2 +-
  OptiScaler/OptiTypes.cpp                      |   2 +-
  OptiScaler/OptiTypes.h                        |   2 +-
  OptiScaler/menu/menu_common.cpp               |   3 +-
@@ -28,7 +27,7 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  .../upscalers/sgsr2/SGSR2Passes_Dx12.cpp      | 206 ++++++++++++++++++
  OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h |  53 +++++
  .../sgsr2/shaders/sgsr2_common.hlsli          |   2 +-
- 15 files changed, 661 insertions(+), 126 deletions(-)
+ 14 files changed, 660 insertions(+), 125 deletions(-)
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Constants.cpp
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Constants.h
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Feature_Dx12.cpp
@@ -36,19 +35,6 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.cpp
  create mode 100644 OptiScaler/upscalers/sgsr2/SGSR2Passes_Dx12.h
 
-diff --git a/OptiScaler.ini b/OptiScaler.ini
-index 96d93be..5d87c02 100644
---- a/OptiScaler.ini
-+++ b/OptiScaler.ini
-@@ -7,7 +7,7 @@
- Dx11Upscaler=auto
- 
- ; Select Upscaler for Dx12 games
--; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), dlss
-+; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
- ; or the name of a custom upscaler: a folder in the 'custom' folder or one registered by an ASI plugin
- ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
- Dx12Upscaler=auto
 diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
 index 4558d30..d1623fd 100644
 --- a/OptiScaler/OptiTypes.cpp
