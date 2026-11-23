@@ -27,6 +27,10 @@ plugin installs. `.github/workflows/sync-build.yml` does it daily on ubuntu-24.0
   published as Latest with no device test, tagged `nightly-...` and titled and noted
   as nightly. Not `--prerelease`, because the plugin uses `/releases/latest`.
   Roll back by pinning a tag in the plugin's `source.json`.
+- When the patches conflict with master, the nightly still opens the issue but builds
+  the newest first-parent upstream commit they apply to (`FALLBACK=1` in
+  `prepare-source.sh`, binary search from `patches/BASE`), notes it as held back, and
+  skips publishing if that commit and repo revision are already released.
 - `patches/BASE` is the upstream commit the series applies on. `prepare-source.sh`
   applies it there, then rebases onto the target; `refresh-patches.sh --export` updates it.
 - Patches never touch `OptiScaler.ini` (upstream edits it almost daily, so it

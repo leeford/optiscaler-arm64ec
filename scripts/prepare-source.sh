@@ -14,6 +14,11 @@
 # Exit codes: 0 applied cleanly, 3 a patch no longer applies. On 3, the failing
 # patch and the conflicting files are written to $SRC_DIR.conflicts.md and the
 # checkout is left at the last patch that applied, for inspection.
+#
+# FALLBACK=1 (the nightly sets it): when the series does not apply to UPSTREAM_REF,
+# still write the report, then use the newest first-parent commit between
+# patches/BASE and UPSTREAM_REF that it does apply to, and exit 0. That commit
+# becomes refs/upstream-base, and $SRC_DIR.heldback explains it for the release notes.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -27,8 +32,10 @@ fi
 SRC=${1:-$PWD/src}
 REF=${2:-master}
 UPSTREAM=${UPSTREAM_URL:-https://github.com/optiscaler/OptiScaler}
+FALLBACK=${FALLBACK:-0}
 report="$SRC.conflicts.md"
-rm -f "$report"
+heldback="$SRC.heldback"
+rm -f "$report" "$heldback"
 
 git_() { git -C "$SRC" -c user.name="optiscaler-arm64ec" \
   -c user.email="optiscaler-arm64ec@users.noreply.github.com" "$@"; }
@@ -52,6 +59,15 @@ echo "patches written on: $series_base"
 
 echo "== patch series"
 git_ am -q --keep-cr "$here"/patches/*.patch
+git_ branch -q -f series HEAD   # the series on patches/BASE, for retries
+
+# Rebase the series onto $1, leaving arm64ec there; on failure leave the conflict.
+onto() {
+  git_ rebase --abort >/dev/null 2>&1 || true
+  git_ checkout -q -f -B arm64ec series
+  git_ rebase -q --onto "$1" "$series_base" arm64ec >/dev/null 2>&1
+}
+
 if ! git_ rebase -q --onto "$base" "$series_base" arm64ec; then
   failing=$(git_ log -1 --format=%s REBASE_HEAD 2>/dev/null || true)
   files=$(git_ diff --name-only --diff-filter=U || true)
@@ -64,7 +80,32 @@ if ! git_ rebase -q --onto "$base" "$series_base" arm64ec; then
     if [ -n "$files" ]; then printf -- '- `%s`\n' $files; else echo "- (none listed; see the workflow log)"; fi
   } > "$report"
   cat "$report"
-  exit 3
+  [ "$FALLBACK" = 1 ] || exit 3
+
+  # Binary search the first-parent history for the newest commit the series applies
+  # to. patches/BASE always works; $base does not.
+  echo "== fallback: newest upstream commit the series applies to"
+  git_ fetch -q --depth 1000 upstream "$base"
+  mapfile -t commits < <(git_ rev-list --first-parent --reverse "$series_base..$base")
+  lo=-1 hi=$(( ${#commits[@]} - 1 ))
+  while (( hi - lo > 1 )); do
+    mid=$(( (lo + hi) / 2 ))
+    if onto "${commits[$mid]}"; then lo=$mid; else hi=$mid; fi
+  done
+  used=$series_base; (( lo < 0 )) || used=${commits[$lo]}
+  breaks=${commits[$hi]}
+  onto "$used" || { echo "fallback: the series no longer applies to $used" >&2; exit 3; }
+  {
+    echo
+    echo "First upstream commit the series does not apply to: \`$breaks\` ($(git_ log -1 --format=%s "$breaks"))"
+    echo
+    echo "The nightly is held back at \`$used\` until the patches are refreshed."
+  } >> "$report"
+  printf '**Held back:** at upstream %s because the patches conflict with %s (master is %s).\n' \
+    "${used:0:7}" "${breaks:0:7}" "${base:0:7}" > "$heldback"
+  base=$used
+  git_ update-ref refs/upstream-base "$base"
+  echo "fallback: using $base ($(git_ log -1 --format='%cs %s' "$base"))"
 fi
 echo "applied $(ls "$here"/patches/*.patch | wc -l) patches"
 

@@ -2,7 +2,8 @@ name: Sync mainline and build ARM64EC
 
 # Daily: take optiscaler/OptiScaler master, apply patches/, build ARM64EC on
 # Linux (clang-cl + xwin), publish a release the Armada Decky plugin installs.
-# A patch that no longer applies opens (or updates) an "upstream-conflict" issue.
+# A patch that no longer applies opens (or updates) an "upstream-conflict" issue,
+# and the build falls back to the newest upstream commit the patches still apply to.
 
 on:
   schedule:
@@ -73,10 +74,14 @@ jobs:
       - name: Apply patches to mainline
         id: prepare
         if: steps.decide.outputs.build == 'true'
-        run: scripts/prepare-source.sh "$PWD/src" "${{ steps.decide.outputs.upstream }}"
+        env:
+          FALLBACK: "1"
+        run: |
+          scripts/prepare-source.sh "$PWD/src" "${{ steps.decide.outputs.upstream }}"
+          if [ -f src.heldback ]; then echo "::warning::$(cat src.heldback)"; fi
 
       - name: Report conflict
-        if: failure() && steps.prepare.outcome == 'failure' && hashFiles('src.conflicts.md') != ''
+        if: always() && hashFiles('src.conflicts.md') != ''
         run: |
           gh label create "$CONFLICT_LABEL" --color B60205 --description "Patch series no longer applies to mainline" --force
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -97,28 +102,43 @@ jobs:
               --title "Patch series conflicts with mainline ${{ steps.decide.outputs.upstream }}" --body-file issue.md
           fi
 
-      - name: Build
+      # A held-back build can land on the same upstream commit as the last release.
+      - name: Check for an identical release
+        id: fresh
         if: steps.decide.outputs.build == 'true'
+        run: |
+          used=$(git -C src rev-parse refs/upstream-base)
+          rev=$(git rev-parse --short=7 HEAD)
+          last=$(gh release view --json body -q .body 2>/dev/null || true)
+          if [ "${{ inputs.force }}" != true ] && grep -qF "commit/$used" <<<"$last" && grep -q "Build repo revision:\*\* $rev" <<<"$last"; then
+            echo "Latest release already has upstream $used and repo $rev; nothing new."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.fresh.outputs.build == 'true'
         run: |
           source .tools/env.sh
           scripts/build.sh "$PWD/src" "$PWD/out"
 
       - name: Package
         id: package
-        if: steps.decide.outputs.build == 'true'
+        if: steps.fresh.outputs.build == 'true'
         run: |
           scripts/package.sh "$PWD/src" "$PWD/out/build/OptiScaler.dll" "$PWD/dist"
           echo "zip=$(ls dist/OptiScaler-arm64ec-*.zip)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
-        if: steps.decide.outputs.build == 'true'
+        if: steps.fresh.outputs.build == 'true'
         with:
           name: optiscaler-arm64ec
           path: dist/
           if-no-files-found: error
 
       - name: Publish release
-        if: steps.decide.outputs.build == 'true'
+        if: steps.fresh.outputs.build == 'true'
         run: |
           zip=${{ steps.package.outputs.zip }}
           short=$(basename "$zip" .zip); short=${short##*-}
@@ -128,7 +148,7 @@ jobs:
             --title "OptiScaler ARM64EC nightly $(date -u +%Y-%m-%d) ($short)" --notes-file dist/release-notes.md
 
       - name: Close resolved conflict issues
-        if: success() && steps.decide.outputs.build == 'true'
+        if: success() && steps.decide.outputs.build == 'true' && hashFiles('src.conflicts.md') == ''
         run: |
           for n in $(gh issue list --label "$CONFLICT_LABEL" --state open --json number -q '.[].number'); do
             gh issue close "$n" --comment "Patches apply and build again on upstream ${{ steps.decide.outputs.upstream }}."
