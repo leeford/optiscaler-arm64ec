@@ -116,7 +116,7 @@ index 14aec74..b56d1b5 100644
 +    ~ScopedHideMinPrecision16() { D3D12Hooks::SetHideMinPrecision16(false); }
  };
 diff --git a/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp b/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
-index 37c0094..245d000 100644
+index ea53a7b..f99cbda 100644
 --- a/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
 +++ b/OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp
 @@ -2,6 +2,7 @@
@@ -127,7 +127,7 @@ index 37c0094..245d000 100644
  
  using namespace OptiMath;
  
-@@ -428,6 +429,7 @@ bool FSR2FeatureDx12::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+@@ -437,6 +438,7 @@ bool FSR2FeatureDx12::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
          LOG_DEBUG("ffxFsr2ContextCreate!");
  
          ScopedSkipHeapCapture skipHeapCapture {};
@@ -136,7 +136,7 @@ index 37c0094..245d000 100644
  
          if (ret != FFX_OK)
 diff --git a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
-index da112be..d8d6d1c 100644
+index 5b3b83d..90c6353 100644
 --- a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
 +++ b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp
 @@ -2,6 +2,7 @@
@@ -147,7 +147,7 @@ index da112be..d8d6d1c 100644
  
  using namespace OptiMath;
  
-@@ -437,6 +438,7 @@ bool FSR2FeatureDx12_212::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
+@@ -446,6 +447,7 @@ bool FSR2FeatureDx12_212::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
          LOG_DEBUG("ffxFsr2ContextCreate!");
  
          ScopedSkipHeapCapture skipHeapCapture {};

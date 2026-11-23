@@ -11,8 +11,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
 ---
  .gitignore                                    |   3 +-
- OptiScaler/OptiTypes.cpp                      |   8 +-
- OptiScaler/OptiTypes.h                        |   2 +
+ OptiScaler/OptiTypes.cpp                      |   4 +
+ OptiScaler/OptiTypes.h                        |   3 +
  OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp         |   3 +-
  OptiScaler/menu/menu_common.cpp               |  21 +-
  OptiScaler/upscalers/FeatureProvider_Dx11.cpp |   5 +
@@ -37,7 +37,7 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  .../sgsr1/precompile/sgsr1_upscale_Vk.h       | 828 ++++++++++++++++++
  .../upscalers/sgsr1/shaders/build_vk.sh       |  20 +
  .../sgsr1/shaders/sgsr1_upscale.hlsl          | 133 +++
- 27 files changed, 1896 insertions(+), 16 deletions(-)
+ 27 files changed, 1894 insertions(+), 15 deletions(-)
  create mode 100644 OptiScaler/upscalers/sgsr1/SGSR1Constants.cpp
  create mode 100644 OptiScaler/upscalers/sgsr1/SGSR1Constants.h
  create mode 100644 OptiScaler/upscalers/sgsr1/SGSR1Feature_Dx11.cpp
@@ -68,10 +68,10 @@ index 690911d..e7f9ffc 100644
  /OptiScaler/upscalers/sgsr2/generated/*.h
 +/OptiScaler/upscalers/sgsr1/generated/*.h
 diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
-index d1623fd..8b7b16c 100644
+index 5ea4292..5991fbc 100644
 --- a/OptiScaler/OptiTypes.cpp
 +++ b/OptiScaler/OptiTypes.cpp
-@@ -86,6 +86,9 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
+@@ -85,6 +85,9 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
      case Upscaler::DLSSD:
          return "DLSSD";
  
@@ -81,7 +81,7 @@ index d1623fd..8b7b16c 100644
      case Upscaler::SGSR2:
          return "SGSR 2";
      }
-@@ -128,6 +131,7 @@ std::string UpscalerShortName(Upscaler upscaler)
+@@ -127,6 +130,7 @@ std::string UpscalerShortName(Upscaler upscaler)
      case Upscaler::DLSSD:
          return "DLSSD";
  
@@ -89,29 +89,11 @@ index d1623fd..8b7b16c 100644
      case Upscaler::SGSR2:
          return "SGSR";
      }
-@@ -164,6 +168,8 @@ std::string UpscalerToCode(Upscaler upscaler)
-         return "dlssd";
-     case Upscaler::FSR31: // DX11 only
-         return "fsr31";
-+    case Upscaler::SGSR1:
-+        return "sgsr1";
-     case Upscaler::SGSR2:
-         return "sgsr2";
-     default: // Upscaler::Reset and unknown
-@@ -183,7 +189,7 @@ Upscaler CodeToUpscaler(const std::string& code)
-         { "dlss", Upscaler::DLSS },         { "dlss_12", Upscaler::DLSS_on12 },
-         { "dlssd", Upscaler::DLSS },        { "fsr31", Upscaler::FSR31 },
-         { "fsr31_12", Upscaler::FFX_on12 }, // for compat reasons
--        { "sgsr2", Upscaler::SGSR2 },
-+        { "sgsr1", Upscaler::SGSR1 },       { "sgsr2", Upscaler::SGSR2 },
-     };
- 
-     auto it = mapping.find(code);
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index aca5c6b..845e00a 100644
+index 0e228c7..af53a7f 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
-@@ -68,6 +68,8 @@ enum class Upscaler
+@@ -71,6 +71,8 @@ enum class Upscaler
  
      DLSSD, // "dlssd", used for the DLSS-D/Ray Reconstruction upscaler+denoiser backend
  
@@ -120,11 +102,19 @@ index aca5c6b..845e00a 100644
      SGSR2, // "sgsr2", Snapdragon Game Super Resolution 2, native DX11, DX12 and Vulkan
      Reset
  };
+@@ -92,6 +94,7 @@ template <> struct EnumConfig<Upscaler>
+         { Upscaler::FFX_on12, "fsr31_12" }, // From before FSR 3.1 got renamed to FFX
+         { Upscaler::DLSSD, "dlssd" },
+         { Upscaler::SGSR2, "sgsr2" },
++        { Upscaler::SGSR1, "sgsr1" },
+     };
+ };
+ 
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
-index 8f70b10..4de6476 100644
+index 3e9c9a6..3a47412 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
-@@ -810,7 +810,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+@@ -814,7 +814,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
      auto upscaler = deviceContext->GetUpscalerType();
      if (!upscaleResult && !deviceContext->IsInited() &&
          (upscaler == Upscaler::XeSS || upscaler == Upscaler::XeSS_on12 || upscaler == Upscaler::DLSS ||
@@ -135,10 +125,10 @@ index 8f70b10..4de6476 100644
          ImGui::InsertNotification({ ImGuiToastType::Error, 10000, "Upscaler failed to run!" });
          state.newBackend = Upscaler::FSR22;
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index b171364..cdd016b 100644
+index bc0792a..6abfaab 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1277,23 +1277,24 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
+@@ -1293,23 +1293,24 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
  void MenuCommon::AddDx11Backends(Upscaler upscaler)
  {
      RenderUpscalerCombo(API::DX11, upscaler,
@@ -171,7 +161,7 @@ index b171364..cdd016b 100644
  }
  
  // Upscaler for the game's ray reconstruction: DLSSDs first, NVIDIA's then custom ones, regular upscalers after.
-@@ -7424,8 +7425,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+@@ -7435,8 +7436,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
          // xess or dlss version >= 2.5.1
          constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
          const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;
@@ -183,7 +173,7 @@ index b171364..cdd016b 100644
          // Determine current mode for the dropdown
          bool currentRcasEnabled = config->RcasEnabled.value_or(rcasEnabled);
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
-index 3a0a0a0..fc194d4 100644
+index f32bc53..e18405f 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 @@ -16,6 +16,7 @@
@@ -206,7 +196,7 @@ index 3a0a0a0..fc194d4 100644
          *feature = std::make_unique<SGSR2FeatureDx11>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
-index e7c3feb..b682c7a 100644
+index 2964284..c86322c 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 @@ -12,6 +12,7 @@
@@ -229,7 +219,7 @@ index e7c3feb..b682c7a 100644
          *feature = std::make_unique<SGSR2FeatureDx12>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/FeatureProvider_Vk.cpp b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
-index 774c848..1f2a905 100644
+index 190339a..70559ec 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 @@ -15,6 +15,7 @@
@@ -252,10 +242,10 @@ index 774c848..1f2a905 100644
          *feature = std::make_unique<SGSR2FeatureVk>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/IFeature_Dx11.cpp b/OptiScaler/upscalers/IFeature_Dx11.cpp
-index 29e20f2..d9cd550 100644
+index 72e1a46..cd99813 100644
 --- a/OptiScaler/upscalers/IFeature_Dx11.cpp
 +++ b/OptiScaler/upscalers/IFeature_Dx11.cpp
-@@ -105,7 +105,7 @@ bool IFeature_Dx11::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NGX_Par
+@@ -169,7 +169,7 @@ bool IFeature_Dx11::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NGX_Par
  
      // Those upcalers don't have their own sharpness so always need to use RCAS when sharpness is set
      auto upscaler = GetUpscalerType();
@@ -265,10 +255,10 @@ index 29e20f2..d9cd550 100644
  
      if (!useRcas)
 diff --git a/OptiScaler/upscalers/IFeature_Dx12.cpp b/OptiScaler/upscalers/IFeature_Dx12.cpp
-index 993a88f..d88eafd 100644
+index b40cb74..831ea3a 100644
 --- a/OptiScaler/upscalers/IFeature_Dx12.cpp
 +++ b/OptiScaler/upscalers/IFeature_Dx12.cpp
-@@ -83,7 +83,7 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
+@@ -370,7 +370,7 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
  
      // Those upcalers don't have their own sharpness so always need to use RCAS when sharpness is set
      auto upscaler = GetUpscalerType();
@@ -278,10 +268,10 @@ index 993a88f..d88eafd 100644
  
      if (!useRcas)
 diff --git a/OptiScaler/upscalers/IFeature_Vk.cpp b/OptiScaler/upscalers/IFeature_Vk.cpp
-index 7657088..9286080 100644
+index 217c24f..6f287fe 100644
 --- a/OptiScaler/upscalers/IFeature_Vk.cpp
 +++ b/OptiScaler/upscalers/IFeature_Vk.cpp
-@@ -48,7 +48,7 @@ bool IFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InP
+@@ -110,7 +110,7 @@ bool IFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InP
          _sharpness = 1.0f;
  
      auto upscaler = GetUpscalerType();

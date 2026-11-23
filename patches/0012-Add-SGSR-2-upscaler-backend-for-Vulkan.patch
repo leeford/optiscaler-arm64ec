@@ -34,10 +34,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 OptiScaler/upscalers/sgsr2/shaders/build_vk.sh
 
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index 30e46fe..aca5c6b 100644
+index df7f59c..0e228c7 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
-@@ -68,7 +68,7 @@ enum class Upscaler
+@@ -71,7 +71,7 @@ enum class Upscaler
  
      DLSSD, // "dlssd", used for the DLSS-D/Ray Reconstruction upscaler+denoiser backend
  
@@ -47,10 +47,10 @@ index 30e46fe..aca5c6b 100644
  };
  
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index e6c54a6..b171364 100644
+index 217b597..bc0792a 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1292,8 +1292,8 @@ void MenuCommon::AddDx12Backends(Upscaler upscaler)
+@@ -1308,8 +1308,8 @@ void MenuCommon::AddDx12Backends(Upscaler upscaler)
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
  {
      RenderUpscalerCombo(API::Vulkan, upscaler,
@@ -62,7 +62,7 @@ index e6c54a6..b171364 100644
  
  // Upscaler for the game's ray reconstruction: DLSSDs first, NVIDIA's then custom ones, regular upscalers after.
 diff --git a/OptiScaler/upscalers/FeatureProvider_Vk.cpp b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
-index f32db15..774c848 100644
+index 8397714..190339a 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Vk.cpp
 @@ -15,6 +15,7 @@
@@ -85,10 +85,10 @@ index f32db15..774c848 100644
          // A custom DLSS doesn't need a DLSS capable GPU
          if (!custom.empty() || (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value()))
 diff --git a/OptiScaler/upscalers/IFeature_Vk.cpp b/OptiScaler/upscalers/IFeature_Vk.cpp
-index e045c8b..7657088 100644
+index 8756c91..217c24f 100644
 --- a/OptiScaler/upscalers/IFeature_Vk.cpp
 +++ b/OptiScaler/upscalers/IFeature_Vk.cpp
-@@ -48,7 +48,7 @@ bool IFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InP
+@@ -110,7 +110,7 @@ bool IFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InP
          _sharpness = 1.0f;
  
      auto upscaler = GetUpscalerType();

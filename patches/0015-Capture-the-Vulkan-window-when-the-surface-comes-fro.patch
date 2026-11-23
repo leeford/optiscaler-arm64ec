@@ -14,10 +14,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  1 file changed, 8 insertions(+)
 
 diff --git a/OptiScaler/hooks/Vulkan_Hooks.cpp b/OptiScaler/hooks/Vulkan_Hooks.cpp
-index 902e4fe..224ada8 100644
+index 25dfd9d..2558677 100644
 --- a/OptiScaler/hooks/Vulkan_Hooks.cpp
 +++ b/OptiScaler/hooks/Vulkan_Hooks.cpp
-@@ -1390,6 +1390,14 @@ PFN_vkVoidFunction hkvkGetInstanceProcAddr(VkInstance instance, const char* pNam
+@@ -1413,6 +1413,14 @@ PFN_vkVoidFunction hkvkGetInstanceProcAddr(VkInstance instance, const char* pNam
      {
          return (PFN_vkVoidFunction) hkvkDestroyDevice;
      }

@@ -40,7 +40,7 @@ index 40154c5..393fa38 100644
      static void Hook()
      {
 diff --git a/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h b/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
-index f618db8..d951392 100644
+index 92ccbfb..367b8e7 100644
 --- a/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
 +++ b/OptiScaler/inputs/FG/XeFG_Inputs_Dx12.h
 @@ -14,7 +14,7 @@ class XeFGInputs

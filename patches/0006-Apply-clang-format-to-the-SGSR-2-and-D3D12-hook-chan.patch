@@ -30,10 +30,10 @@ index 0cd92af..5358ebd 100644
          }
      }
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 6b35b20..e6c54a6 100644
+index 1772b12..217b597 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
-@@ -1284,9 +1284,9 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
+@@ -1300,9 +1300,9 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
  
  void MenuCommon::AddDx12Backends(Upscaler upscaler)
  {
@@ -46,7 +46,7 @@ index 6b35b20..e6c54a6 100644
  }
  
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
-@@ -7424,7 +7424,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+@@ -7435,7 +7435,8 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
          // xess or dlss version >= 2.5.1
          constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
          const bool isDlss = currentBackend == Upscaler::DLSS || currentBackend == Upscaler::DLSS_on12;

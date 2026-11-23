@@ -34,10 +34,10 @@ Claude-Session: https://claude.ai/code/session_01A9WqnwGsLAcGJXd49N2pes
  create mode 100644 arm64ec/patches/unordered_dense-arm64ec.patch
 
 diff --git a/OptiScaler/hooks/Vulkan_Hooks.cpp b/OptiScaler/hooks/Vulkan_Hooks.cpp
-index 5c99885..902e4fe 100644
+index 75a7fdd..25dfd9d 100644
 --- a/OptiScaler/hooks/Vulkan_Hooks.cpp
 +++ b/OptiScaler/hooks/Vulkan_Hooks.cpp
-@@ -221,12 +221,30 @@ static bool IsDxgiBackedCaller(void* returnAddress)
+@@ -222,12 +222,30 @@ static bool IsDxgiBackedCaller(void* returnAddress)
      if (module == nullptr || module == dllModule)
          return false;
  

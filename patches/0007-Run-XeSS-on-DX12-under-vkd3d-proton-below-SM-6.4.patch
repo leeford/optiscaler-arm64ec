@@ -82,7 +82,7 @@ index b56d1b5..85b2297 100644
  
  class ScopedHideMinPrecision16
 diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-index 38cf208..728dc0a 100644
+index 76f18d0..50cef9f 100644
 --- a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
 +++ b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
 @@ -591,6 +591,18 @@ static Upscaler GetUpscalerBackend()

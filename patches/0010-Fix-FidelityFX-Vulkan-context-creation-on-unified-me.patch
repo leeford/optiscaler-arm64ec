@@ -157,7 +157,7 @@ index 53d91cc..58672ae 100644
  {
    private:
 diff --git a/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp b/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
-index 2d077f7..16f65d6 100644
+index b3c9afe..417ac0a 100644
 --- a/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
 +++ b/OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp
 @@ -1,4 +1,5 @@
@@ -175,7 +175,7 @@ index 2d077f7..16f65d6 100644
          ffxCreateBackendVKDesc backendDesc = { 0 };
          backendDesc.vkDevice = Device;
 diff --git a/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp b/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
-index ac04967..f82dff3 100644
+index 0ca7ec3..c549e55 100644
 --- a/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
 +++ b/OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp
 @@ -1,4 +1,5 @@
@@ -193,7 +193,7 @@ index ac04967..f82dff3 100644
          auto scratchBufferSize = ffxFsr2GetScratchMemorySizeVK(PhysicalDevice);
          void* scratchBuffer = calloc(scratchBufferSize, 1);
 diff --git a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
-index 8b5831b..130256d 100644
+index a37e6b9..0b33c17 100644
 --- a/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
 +++ b/OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp
 @@ -1,4 +1,5 @@
